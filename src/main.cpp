@@ -1,164 +1,210 @@
-// M5CoreS3_JSN_SR04T_Web_FreeRTOS.ino
+// M5CoreS3_JSN_SR04T_Calib_Polynomial.ino
+// Mesure JSN-SR04T -> calibration 3 points -> polynôme quadratique
+// Board: M5Stack CoreS3 (ESP32-S3)
 
 #include <M5CoreS3.h>
 #include <WiFi.h>
 #include <WebServer.h>
 #include <Preferences.h>
-#include <ArduinoJson.h>
 #include <mutex>
 
-// ---------- CONFIG ----------
+// -------- CONFIG ----------
 const char* WIFI_SSID = "TON_SSID";
 const char* WIFI_PASS = "TON_MOT_DE_PASSE";
 
-const int trigPin = 9;
-const int echoPin = 8;
+const int trigPin = 9;   // TRIG du JSN-SR04T
+const int echoPin = 8;   // ECHO du JSN-SR04T (protéger si 5V)
+const int SENSOR_PERIOD_MS = 200;
+const int DISPLAY_PERIOD_MS = 300;
 
-const int SENSOR_PERIOD_MS = 200;    // intervalle mesures
-const int DISPLAY_PERIOD_MS = 300;   // intervalle maj écran
-
-// ---------- GLOBALS ----------
 WebServer server(80);
 Preferences preferences;
-
-volatile float lastDistanceCm = 0.0f; // distance la plus récente (écrit dans task sensor)
 std::mutex distMutex;
 
-float calibs[3] = {50.0f, 100.0f, 150.0f}; // valeurs par défaut (cm)
+volatile float lastMeasuredCm = -1.0f;   // distance brute mesurée (du capteur)
+volatile float lastEstimatedHeight = -1.0f; // hauteur estimée (après polynôme)
 
-// ---------- UTIL ----------
+// calibration arrays:
+// m = valeur mesurée (x), h = hauteur réelle correspondante (y)
+float calib_m[3] = {0.0f, 0.0f, 0.0f};   // mesuré (cm)
+float calib_h[3] = {50.0f, 100.0f, 150.0f}; // hauteur réelle (défaut)
+
+// polynomial coefficients: height = a*x^2 + b*x + c
+double a_coef = 0.0, b_coef = 0.0, c_coef = 0.0;
+
+// ---------- UTIL: mesure ultrason ----------
 float measureDistanceCmOnce() {
-  // déclenche le capteur JSN-SR04T
+  // trigger
   digitalWrite(trigPin, LOW);
   delayMicroseconds(2);
   digitalWrite(trigPin, HIGH);
   delayMicroseconds(10);
   digitalWrite(trigPin, LOW);
 
-  // mesurer durée echo (us) - timeout 30000 us (≈5 m)
+  // attente echo en us, timeout 30000 us (~5 m)
   unsigned long duration = pulseIn(echoPin, HIGH, 30000UL);
-  if (duration == 0) {
-    // timeout, pas d'écho
-    return -1.0f;
-  }
-  // distance en cm : durée (us) * 0.01715 (vitesse-son/2)
+  if (duration == 0) return -1.0f; // timeout
+  // distance en cm, v son /2 => 34300 cm/s => 0.0343 cm/us ; time travel /2 => *0.01715
   float dist = duration * 0.01715f;
   return dist;
 }
 
-// moyenne glissante pour stabiliser
+// running average simple
 float runningAverage(float newVal, float prevAvg, float alpha = 0.2f) {
-  if (newVal < 0) return prevAvg; // ignore timeouts
+  if (newVal < 0) return prevAvg;
   return prevAvg * (1.0f - alpha) + newVal * alpha;
 }
 
 // ---------- PERSISTENCE ----------
 void loadCalibrations() {
   preferences.begin("calib", true);
-  for (int i = 0; i < 3; i++) {
-    char key[8];
-    sprintf(key, "c%d", i);
-    if (preferences.isKey(key)) {
-      calibs[i] = preferences.getFloat(key, calibs[i]);
-    }
+  for (int i = 0; i < 3; ++i) {
+    char keyM[8], keyH[8];
+    sprintf(keyM, "m%d", i);
+    sprintf(keyH, "h%d", i);
+    calib_m[i] = preferences.getFloat(keyM, calib_m[i]); // default 0 = not set
+    calib_h[i] = preferences.getFloat(keyH, calib_h[i]); // default values kept
   }
   preferences.end();
 }
 
-void saveCalibration(int idx, float value) {
+void saveCalibrationToNVS(int idx, float measured, float height) {
   if (idx < 0 || idx > 2) return;
   preferences.begin("calib", false);
-  char key[8];
-  sprintf(key, "c%d", idx);
-  preferences.putFloat(key, value);
+  char keyM[8], keyH[8];
+  sprintf(keyM, "m%d", idx);
+  sprintf(keyH, "h%d", idx);
+  preferences.putFloat(keyM, measured);
+  preferences.putFloat(keyH, height);
   preferences.end();
-  calibs[idx] = value;
+  calib_m[idx] = measured;
+  calib_h[idx] = height;
 }
 
+// clear all calibrations (optionnel)
+void clearCalibrations() {
+  preferences.begin("calib", false);
+  preferences.clear();
+  preferences.end();
+  for (int i=0;i<3;i++){ calib_m[i]=0; /* calib_h keep defaults if you want */ }
+}
+
+// ---------- POLYNOMIAL SOLVER ----------
+bool computePolynomialFrom3Points() {
+  // Use points (x1,y1), (x2,y2), (x3,y3) where x = measured distance, y = real height
+  double x1 = calib_m[0], x2 = calib_m[1], x3 = calib_m[2];
+  double y1 = calib_h[0], y2 = calib_h[1], y3 = calib_h[2];
+
+  // require distinct x's and non-zero (we need proper calibrations)
+  if (x1 == 0.0 || x2 == 0.0 || x3 == 0.0) {
+    Serial.println("computePolynomial: one of measured values is 0 -> need save calibration first");
+    return false;
+  }
+  if ((x1 == x2) || (x1 == x3) || (x2 == x3)) {
+    Serial.println("computePolynomial: measured values must be distinct");
+    return false;
+  }
+
+  // Solve the Vandermonde system for a,b,c.
+  // Formula via Cramer's rule (direct closed-form) as used earlier.
+  double denom = (x1 - x2)*(x1 - x3)*(x2 - x3);
+  if (denom == 0.0) return false;
+
+  a_coef = ( x3*(y2 - y1) + x2*(y1 - y3) + x1*(y3 - y2) ) / denom;
+  b_coef = ( x3*x3*(y1 - y2) + x2*x2*(y3 - y1) + x1*x1*(y2 - y3) ) / denom;
+  c_coef = ( x2*x3*(x2 - x3)*y1 + x3*x1*(x3 - x1)*y2 + x1*x2*(x1 - x2)*y3 ) / denom;
+
+  Serial.printf("Poly computed: height = %.8f*x^2 + %.8f*x + %.8f\n", a_coef, b_coef, c_coef);
+  return true;
+}
+
+float estimateHeightFromMeasured(float x) {
+  // if coefficients not set, just return -1
+  return (float)(a_coef*x*x + b_coef*x + c_coef);
+}
 
 // ---------- WEB HANDLERS ----------
-String jsonDistance() {
-  float d;
+String makeJsonDistance() {
+  float m, h;
   {
     std::lock_guard<std::mutex> lock(distMutex);
-    d = lastDistanceCm;
+    m = lastMeasuredCm;
+    h = lastEstimatedHeight;
   }
-  JsonDocument doc;
+  // manual JSON small (to avoid heavy libs)
+  char buf[128];
+  if (m < 0) sprintf(buf, "{\"measured_cm\":null,\"estimated_cm\":null}");
+  else sprintf(buf, "{\"measured_cm\":%.2f,\"estimated_cm\":%.2f}", m, h);
+  return String(buf);
+}
 
-  doc["distance_cm"] = d;
-  String s;
-  serializeJson(doc, s);
+String makeJsonCalibs() {
+  // return arrays of objects: [{index:0, measured:.., height:..}, ...]
+  String s = "[";
+  for (int i=0;i<3;i++){
+    char tmp[128];
+    sprintf(tmp, "{\"index\":%d,\"measured\":%.2f,\"height\":%.2f}", i, calib_m[i], calib_h[i]);
+    s += String(tmp);
+    if (i<2) s += ",";
+  }
+  s += "]";
   return s;
 }
 
-String jsonCalibs() {
-  JsonDocument doc;
-
-  for (int i=0;i<3;i++) doc["calib"][i] = calibs[i];
-  String s;
-  serializeJson(doc, s);
-  return s;
-}
-
-void handleRoot() {
-  // page HTML simple — AJAX pour /distance et boutons pour sauver calibs
+void handleRoot(){
+  // HTML page: shows measured, estimated and calibration UI
   String page = R"rawliteral(
 <!doctype html>
 <html>
-<head>
-  <meta charset="utf-8">
-  <title>M5CoreS3 - Mesure Puits</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <style>
-    body{font-family:sans-serif;padding:10px}
-    .big{font-size:2rem;font-weight:700}
-    .calib{margin-top:10px}
-    button{padding:8px 12px;margin-right:8px}
-  </style>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>M5 Puits - Calib</title>
+<style>body{font-family:sans-serif;padding:10px} .big{font-size:1.5rem;font-weight:700} button{margin:6px}</style>
 </head>
 <body>
-  <h2>M5CoreS3 — Mesure hauteur du puit</h2>
-  <div>Distance mesurée: <span id="dist" class="big">-- cm</span></div>
-  <div class="calib">
-    <div>Calibrations:</div>
-    <div>
-      <span id="c0">C1: -- cm</span>
-      <button onclick="saveCalib(0)">Sauver C1 (mesure courante)</button>
-    </div>
-    <div>
-      <span id="c1">C2: -- cm</span>
-      <button onclick="saveCalib(1)">Sauver C2 (mesure courante)</button>
-    </div>
-    <div>
-      <span id="c2">C3: -- cm</span>
-      <button onclick="saveCalib(2)">Sauver C3 (mesure courante)</button>
-    </div>
-  </div>
+<h2>M5 Puits - Calibration</h2>
+<div>Mesuré (capteur): <span id="meas" class="big">--</span> cm</div>
+<div>Hauteur estimée: <span id="est" class="big">--</span> cm</div>
+<hr>
+<h3>Points de calibration (saisir hauteur réelle puis "Sauver current")</h3>
+<div id="calibs"></div>
+<button onclick="clearCalib()">Effacer calibrations NVS</button>
 <script>
-function fetchDist(){
-  fetch('/distance').then(r=>r.json()).then(d=>{
-    let dist = d.distance_cm;
-    document.getElementById('dist').innerText = (dist>=0?dist.toFixed(1):'No echo');
+function refresh(){
+  fetch('/distance').then(r=>r.json()).then(j=>{
+    if (j.measured_cm === null) {
+      document.getElementById('meas').innerText = '--';
+      document.getElementById('est').innerText = '--';
+    } else {
+      document.getElementById('meas').innerText = j.measured_cm.toFixed(1);
+      document.getElementById('est').innerText = j.estimated_cm.toFixed(1);
+    }
+  });
+  fetch('/calibs').then(r=>r.text()).then(t=>{
+    let arr = JSON.parse(t);
+    let html='';
+    arr.forEach(function(c){
+      html += 'C'+(c.index+1)+': Mesuré = <b>'+ (c.measured>0 ? c.measured.toFixed(1) : '--') + ' cm</b> ' +
+              'Hauteur réelle (cm): <input id=\"h'+c.index+'\" value=\"'+ (c.height?c.height:100) +'\"> ' +
+              '<button onclick=\"save('+c.index+')\">Sauver current</button><br>';
+    });
+    document.getElementById('calibs').innerHTML = html;
   });
 }
-function fetchCalibs(){
-  fetch('/calibs').then(r=>r.json()).then(d=>{
-    let c = d.calib;
-    document.getElementById('c0').innerText = 'C1: ' + c[0].toFixed(1) + ' cm';
-    document.getElementById('c1').innerText = 'C2: ' + c[1].toFixed(1) + ' cm';
-    document.getElementById('c2').innerText = 'C3: ' + c[2].toFixed(1) + ' cm';
-  });
-}
-function saveCalib(id){
-  fetch('/save_calib?id='+id, { method:'POST' })
+function save(idx){
+  const val = document.getElementById('h'+idx).value;
+  // POST to save_calib with id and height (height = real height)
+  fetch('/save_calib?id='+idx+'&height='+encodeURIComponent(val), { method:'POST' })
     .then(r=>r.json()).then(j=>{
-      if (j.ok) { fetchCalibs(); alert('Calibration sauvegardée.'); }
-      else alert('Erreur.');
+      if (j.ok) { alert('Saved'); refresh(); } else alert('Error');
     });
 }
-setInterval(fetchDist, 800);
-setInterval(fetchCalibs, 3000);
-fetchDist(); fetchCalibs();
+function clearCalib(){
+  fetch('/clear_calib', { method:'POST'}).then(r=>r.json()).then(j=>{
+    alert('Calibrations cleared'); refresh();
+  });
+}
+setInterval(refresh,1200);
+refresh();
 </script>
 </body>
 </html>
@@ -166,92 +212,111 @@ fetchDist(); fetchCalibs();
   server.send(200, "text/html", page);
 }
 
-void handleDistance() {
-  server.send(200, "application/json", jsonDistance());
+void handleDistanceApi(){
+  String j = makeJsonDistance();
+  server.send(200, "application/json", j);
 }
 
-void handleCalibs() {
-  server.send(200, "application/json", jsonCalibs());
+void handleCalibsApi(){
+  String j = makeJsonCalibs();
+  server.send(200, "application/json", j);
 }
 
-void handleSaveCalib() {
-  if (!server.hasArg("id")) {
-    server.send(400, "application/json", "{\"ok\":false,\"err\":\"no id\"}");
+// Save calibration: expects args id (0..2) and height (float, cm)
+// will read current measured distance, and save (measured, height)
+void handleSaveCalib(){
+  if (!server.hasArg("id") || !server.hasArg("height")) {
+    server.send(400, "application/json", "{\"ok\":false,\"err\":\"missing args\"}");
     return;
   }
   int id = server.arg("id").toInt();
-  float cur;
+  float height = server.arg("height").toFloat();
+
+  float measured;
   {
     std::lock_guard<std::mutex> lock(distMutex);
-    cur = lastDistanceCm;
+    measured = lastMeasuredCm;
   }
-  if (cur <= 0) {
-    server.send(200, "application/json", "{\"ok\":false,\"err\":\"no echo\"}");
+  if (measured <= 0.0f) {
+    server.send(200, "application/json", "{\"ok\":false,\"err\":\"no measured value (no echo)\"}");
     return;
   }
-  saveCalibration(id, cur);
+
+  // save
+  saveCalibrationToNVS(id, measured, height);
+  bool ok = computePolynomialFrom3Points();
+  if (!ok) {
+    server.send(200, "application/json", "{\"ok\":false,\"err\":\"failed compute polynomial\"}");
+    return;
+  }
+  server.send(200, "application/json", "{\"ok\":true}");
+}
+
+// clear calibrations stored in NVS (and memory)
+void handleClearCalib(){
+  clearCalibrations();
+  // recompute (likely fail until 3 points saved)
+  computePolynomialFrom3Points();
   server.send(200, "application/json", "{\"ok\":true}");
 }
 
 // ---------- TASKS ----------
-void sensorTask(void* pvParameters) {
+void sensorTask(void *pv){
   float avg = 0.0f;
-  for (;;) {
+  for(;;){
     float m = measureDistanceCmOnce();
     avg = runningAverage(m, avg, 0.25f);
+    float estimated = -1.0f;
+    if (avg > 0.0f) estimated = estimateHeightFromMeasured(avg);
     {
       std::lock_guard<std::mutex> lock(distMutex);
-      lastDistanceCm = avg;
+      lastMeasuredCm = avg;
+      lastEstimatedHeight = estimated;
     }
     vTaskDelay(pdMS_TO_TICKS(SENSOR_PERIOD_MS));
   }
 }
 
-void displayTask(void* pvParameters) {
-  M5.Display.setTextSize(2);
-  for (;;) {
-    M5.update();
-    // read distance snapshot
-    float ds;
+void displayTask(void *pv) {
+  for(;;){
+    float m, est;
     {
       std::lock_guard<std::mutex> lock(distMutex);
-      ds = lastDistanceCm;
+      m = lastMeasuredCm;
+      est = lastEstimatedHeight;
     }
-    M5.Display.fillRect(0, 0, M5.Display.width(), 60, TFT_BLACK);
-    M5.Display.setCursor(6, 6);
+    M5.update();
+    M5.Display.fillRect(0,0,M5.Display.width(),80,TFT_BLACK);
+    M5.Display.setCursor(6,6);
     M5.Display.setTextSize(3);
-    if (ds > 0) {
-      M5.Display.printf("Distance: %.1f cm\n", ds);
-    } else {
-      M5.Display.printf("Distance: -- cm\n");
-    }
+    if (m>0) M5.Display.printf("Mes: %.1f cm\n", m);
+    else M5.Display.printf("Mes: -- cm\n");
     M5.Display.setTextSize(2);
-    M5.Display.printf("C1: %.1f  C2: %.1f  C3: %.1f", calibs[0], calibs[1], calibs[2]);
+    if (est > -0.5f) M5.Display.printf("Ht: %.1f cm\n", est);
+    else M5.Display.printf("Ht: --\n");
     vTaskDelay(pdMS_TO_TICKS(DISPLAY_PERIOD_MS));
   }
 }
 
-// ---------- SETUP ----------
-void setup() {
-  // Serial pour debug
+// ---------- SETUP & LOOP ----------
+void setup(){
   Serial.begin(115200);
-  delay(100);
+  delay(800);
   M5.begin();
-  M5.Lcd.println("Initialisation...");
-  delay(500);
+  M5.Display.println("Init...");
 
   // pins
   pinMode(trigPin, OUTPUT);
   pinMode(echoPin, INPUT);
 
-  // load calib
+  // load saved calibrations and try compute polynomial
   loadCalibrations();
+  computePolynomialFrom3Points();
 
-  // Connect WiFi
+  // Wifi connect (if fails goes to AP mode)
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
-  M5.Display.setCursor(6, 80);
-  M5.Display.println("Connexion WiFi...");
+  M5.Display.println("WiFi...");
   int tries = 0;
   while (WiFi.status() != WL_CONNECTED && tries < 30) {
     delay(500);
@@ -259,32 +324,28 @@ void setup() {
     tries++;
   }
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.println();
-    Serial.print("IP: "); Serial.println(WiFi.localIP());
+    Serial.printf("\nIP: %s\n", WiFi.localIP().toString().c_str());
     M5.Display.printf("IP: %s\n", WiFi.localIP().toString().c_str());
   } else {
-    // fallback: start AP
     WiFi.mode(WIFI_AP);
     WiFi.softAP("M5CoreS3_Puits");
     M5.Display.println("AP: M5CoreS3_Puits");
-    Serial.println("Started AP mode: M5CoreS3_Puits");
   }
 
-  // Web routes
+  // web routes
   server.on("/", HTTP_GET, handleRoot);
-  server.on("/distance", HTTP_GET, handleDistance);
-  server.on("/calibs", HTTP_GET, handleCalibs);
+  server.on("/distance", HTTP_GET, handleDistanceApi);
+  server.on("/calibs", HTTP_GET, handleCalibsApi);
   server.on("/save_calib", HTTP_POST, handleSaveCalib);
+  server.on("/clear_calib", HTTP_POST, handleClearCalib);
   server.begin();
 
-  // Create FreeRTOS tasks
+  // create tasks
   xTaskCreatePinnedToCore(sensorTask, "sensorTask", 4096, NULL, 2, NULL, 1);
   xTaskCreatePinnedToCore(displayTask, "displayTask", 4096, NULL, 1, NULL, 1);
 }
 
-// ---------- MAIN LOOP ----------
-void loop() {
-  // serveur web non bloquant: handle client
+void loop(){
   server.handleClient();
   delay(10);
 }
