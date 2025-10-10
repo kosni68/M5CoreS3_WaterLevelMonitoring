@@ -11,8 +11,8 @@
 const char* WIFI_SSID = "TON_SSID";
 const char* WIFI_PASS = "TON_MOT_DE_PASSE";
 
-const int trigPin = 26;
-const int echoPin = 27;
+const int trigPin = 9;
+const int echoPin = 8;
 
 const int SENSOR_PERIOD_MS = 200;    // intervalle mesures
 const int DISPLAY_PERIOD_MS = 300;   // intervalle maj écran
@@ -55,9 +55,11 @@ float runningAverage(float newVal, float prevAvg, float alpha = 0.2f) {
 // ---------- PERSISTENCE ----------
 void loadCalibrations() {
   preferences.begin("calib", true);
-  for (int i=0;i<3;i++) {
-    if (preferences.isKey(String("c")+String(i))) {
-      calibs[i] = preferences.getFloat(String("c")+String(i).c_str(), calibs[i]);
+  for (int i = 0; i < 3; i++) {
+    char key[8];
+    sprintf(key, "c%d", i);
+    if (preferences.isKey(key)) {
+      calibs[i] = preferences.getFloat(key, calibs[i]);
     }
   }
   preferences.end();
@@ -66,10 +68,13 @@ void loadCalibrations() {
 void saveCalibration(int idx, float value) {
   if (idx < 0 || idx > 2) return;
   preferences.begin("calib", false);
-  preferences.putFloat(String("c")+String(idx).c_str(), value);
+  char key[8];
+  sprintf(key, "c%d", idx);
+  preferences.putFloat(key, value);
   preferences.end();
   calibs[idx] = value;
 }
+
 
 // ---------- WEB HANDLERS ----------
 String jsonDistance() {
@@ -78,7 +83,8 @@ String jsonDistance() {
     std::lock_guard<std::mutex> lock(distMutex);
     d = lastDistanceCm;
   }
-  StaticJsonDocument<128> doc;
+  JsonDocument doc;
+
   doc["distance_cm"] = d;
   String s;
   serializeJson(doc, s);
@@ -86,7 +92,8 @@ String jsonDistance() {
 }
 
 String jsonCalibs() {
-  StaticJsonDocument<256> doc;
+  JsonDocument doc;
+
   for (int i=0;i<3;i++) doc["calib"][i] = calibs[i];
   String s;
   serializeJson(doc, s);
@@ -230,7 +237,8 @@ void setup() {
   Serial.begin(115200);
   delay(100);
   M5.begin();
-  M5.Display.clear();
+  M5.Lcd.println("Initialisation...");
+  delay(500);
 
   // pins
   pinMode(trigPin, OUTPUT);
