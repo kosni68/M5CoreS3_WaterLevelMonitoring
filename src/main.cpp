@@ -15,18 +15,6 @@
 #include <PubSubClient.h>   // add to platformio.ini: PubSubClient
 #include <mutex>
 
-#include <esp_sleep.h>
-#include <esp_task_wdt.h>
-#include <driver/rtc_io.h>
-
-#define SLEEP_INTERVAL_SEC 30        // réveil périodique
-#define INACTIVITY_TIMEOUT_MS 600000 // 10 min
-#define TOUCH_WAKEUP_PIN GPIO_NUM_3   // GPIO relié au touch (à adapter si besoin)
-
-unsigned long lastTouchMillis = 0;
-bool screenActive = true;
-bool wifiActive = true;
-
 //
 // =========== CONFIG =============
 const char* WIFI_SSID = "Freebox-22A0D2";
@@ -49,7 +37,10 @@ const int DISPLAY_PERIOD_MS = 300;
 // deep sleep interval (seconds)
 const uint64_t DEEPSLEEP_INTERVAL_S = 30ULL;
 // interactive timeout (ms) before going back to deep-sleep
-const uint32_t INTERACTIVE_TIMEOUT_MS = 10 * 60 * 1000UL; // 10 minutes
+const uint32_t INTERACTIVE_TIMEOUT_MS = 2 * 60 * 1000UL; // 10 minutes
+
+// Conserve cette variable dans la mémoire RTC (survit au deep sleep)
+RTC_DATA_ATTR bool wokeFromTimer = false;
 
 // =========== GLOBALS ===========
 WebServer server(80);
@@ -388,6 +379,7 @@ void periodicMeasureAndMaybeMQTT_andSleep() {
     }
   }
   // now go back to deep-sleep (timer)
+  wokeFromTimer = true;
   esp_sleep_enable_timer_wakeup(DEEPSLEEP_INTERVAL_S * 1000000ULL);
   delay(20);
   esp_deep_sleep_start();
@@ -409,64 +401,82 @@ void sensorTask(void *pv) {
   }
 }
 
+// display task (interactive mode)
 void displayTask(void *pv) {
-  static float lastM = -1, lastEst = -1;
-  static String lastIP = "";
-  static int lastLevel = -1;
+  // initial draw
+  M5.update();
+  M5.Display.fillScreen(TFT_BLACK);
+  drawGaugeBackground();
+  prevPercent = -1;
+  prevMeasured = NAN; prevEstimated = NAN; prevDuration = ULONG_MAX;
+  prevCuveVide = cuveVide; prevCuvePleine = cuvePleine;
 
   for (;;) {
-    M5.update();
-
-    float m, est;
+    float measured, estimated; unsigned long duration;
     {
       std::lock_guard<std::mutex> lock(distMutex);
-      m = lastMeasuredCm;
-      est = lastEstimatedHeight;
+      measured = lastMeasuredCm; estimated = lastEstimatedHeight; duration = lastDurationUs;
     }
+    // left text zone update?
+    bool needText = false;
+    if (isnan(prevMeasured) || (measured>=0 && fabs(measured - prevMeasured) > 0.2f)) needText = true;
+    if (isnan(prevEstimated) || (estimated>=0 && fabs(estimated - prevEstimated) > 0.2f)) needText = true;
+    if (duration != prevDuration) needText = true;
+    if (cuveVide != prevCuveVide || cuvePleine != prevCuvePleine) needText = true;
 
-    // Rafraîchir uniquement si changement
-    if (fabs(m - lastM) > 0.5f || fabs(est - lastEst) > 0.5f) {
-      M5.Display.fillRect(0, 0, M5.Display.width(), 80, TFT_BLACK);
-      M5.Display.setCursor(6, 6);
-      M5.Display.setTextSize(3);
-      if (m > 0)
-        M5.Display.printf("Mes: %.1f cm\n", m);
-      else
-        M5.Display.printf("Mes: -- cm\n");
+    if (needText) {
+      M5.Display.fillRect(0, 0, gaugeX-8, 120, TFT_BLACK);
+      M5.Display.setTextSize(3); M5.Display.setTextColor(TFT_WHITE);
+      M5.Display.setCursor(8, 8);
+      if (measured > 0) M5.Display.printf("Mes: %.1f cm\n", measured); else M5.Display.printf("Mes: --\n");
       M5.Display.setTextSize(2);
-      if (est > -0.5f)
-        M5.Display.printf("Ht: %.1f cm\n", est);
-      else
-        M5.Display.printf("Ht: --\n");
-
-      lastM = m;
-      lastEst = est;
-    }
-
-    // --- Affichage jauge graphique ---
-    int topY = 100;
-    int gaugeHeight = 180;
-    int fullDist = 123; // distance cuve vide
-    int emptyDist = 42; // distance cuve pleine
-    float ratio = (fullDist - m) / (fullDist - emptyDist);
-    ratio = constrain(ratio, 0.0f, 1.0f);
-    int levelH = (int)(gaugeHeight * ratio);
-
-    if (abs(levelH - lastLevel) > 3) {
-      int baseY = topY + gaugeHeight;
-      M5.Display.fillRect(20, topY, 40, gaugeHeight, TFT_DARKGREY);
-      M5.Display.fillRect(20, baseY - levelH, 40, levelH, TFT_BLUE);
-      lastLevel = levelH;
-    }
-
-    // --- Affichage IP ---
-    String ip = WiFi.localIP().toString();
-    if (ip != lastIP) {
-      M5.Display.fillRect(0, 280, 320, 20, TFT_BLACK);
-      M5.Display.setCursor(6, 280);
+      if (estimated > -0.5f) M5.Display.printf("Ht: %.1f cm\n", estimated); else M5.Display.printf("Ht: --\n");
       M5.Display.setTextSize(2);
+      M5.Display.printf("Dur: %lu us\n", duration);
+      M5.Display.setTextSize(2);
+      M5.Display.printf("Vide: %.1f\n", cuveVide);
+      M5.Display.printf("Pleine: %.1f\n", cuvePleine);
+
+      prevMeasured = measured; prevEstimated = estimated; prevDuration = duration;
+      prevCuveVide = cuveVide; prevCuvePleine = cuvePleine;
+    }
+
+    // gauge percent computation
+    int percent = 0;
+    if (measured > 0) {
+      float denom = (cuveVide - cuvePleine);
+      if (fabs(denom) < 1e-3) percent = 0;
+      else {
+        float ratio = (cuveVide - measured) / denom;
+        ratio = constrain(ratio, 0.0f, 1.0f);
+        percent = (int)round(ratio * 100.0f);
+      }
+    } else percent = 0;
+
+    if (percent != prevPercent) {
+      drawGaugeFill(percent);
+      prevPercent = percent;
+    }
+
+    // display IP at bottom if connected
+    if (WiFi.status() == WL_CONNECTED) {
+      String ip = WiFi.localIP().toString();
+      M5.Display.fillRect(0, M5.Display.height()-24, M5.Display.width(), 24, TFT_BLACK);
+      M5.Display.setTextSize(2);
+      M5.Display.setCursor(8, M5.Display.height()-22);
       M5.Display.printf("IP: %s", ip.c_str());
-      lastIP = ip;
+    } else {
+      M5.Display.fillRect(0, M5.Display.height()-24, M5.Display.width(), 24, TFT_BLACK);
+      M5.Display.setTextSize(2);
+      M5.Display.setCursor(8, M5.Display.height()-22);
+      M5.Display.print("IP: --");
+    }
+
+    // check touch to update interactiveLastTouchMs
+    M5.update();
+    // Note: touchscreen is via I2C; M5.Touch is available in M5CoreS3 lib.
+    if (M5.Touch.getDetail().isPressed()) {
+      interactiveLastTouchMs = millis();
     }
 
     vTaskDelay(pdMS_TO_TICKS(DISPLAY_PERIOD_MS));
@@ -499,108 +509,60 @@ void startInteractiveMode() {
   interactiveLastTouchMs = millis();
 }
 
-void goToDeepSleep() {
-  Serial.println("➡️ Mise en veille profonde...");
-
-  // Éteindre l’écran proprement
-  M5.Display.clear();
-  M5.Display.sleep();
-
-  // Couper le WiFi pour économie
-  WiFi.disconnect(true);
-  WiFi.mode(WIFI_OFF);
-
-  // Activer réveil tactile et timer
-  esp_sleep_enable_touchpad_wakeup();
-  esp_sleep_enable_timer_wakeup(SLEEP_INTERVAL_SEC * 1000000ULL);
-
-  // Entrée en deep sleep
-  esp_deep_sleep_start();
-}
-
 void stopInteractiveModeAndSleep() {
   // stop webserver and go to deep-sleep
   server.stop();
   disconnectWiFiClean();
   // small delay
   delay(50);
+
+  M5.Power.Axp2101.powerOff();
+
   // schedule deep sleep
+  wokeFromTimer = false;
   esp_sleep_enable_timer_wakeup(DEEPSLEEP_INTERVAL_S * 1000000ULL);
   delay(20);
   esp_deep_sleep_start();
 }
-
 void setup() {
-  Serial.begin(115200);
-  delay(300);
-  M5.begin();
-  M5.Display.setRotation(1);
-  M5.Display.fillScreen(TFT_BLACK);
-  M5.Display.setTextColor(TFT_WHITE);
-  M5.Display.setTextSize(2);
-  M5.Display.setCursor(6, 6); M5.Display.println("Boot...");
+    Serial.begin(115200);
+    delay(300);
 
-  pinMode(trigPin, OUTPUT);
-  pinMode(echoPin, INPUT);
+    M5.begin();
+    M5.Display.setRotation(1);
+    M5.Display.fillScreen(TFT_BLACK);
+    M5.Display.setTextColor(TFT_WHITE);
+    M5.Display.setTextSize(2);
+    M5.Display.setCursor(6, 6);
+    M5.Display.println("Boot...");
 
-  loadCalibrations();
-  computePolynomialFrom3Points();
-  setupMQTT();
+    pinMode(trigPin, OUTPUT);
+    pinMode(echoPin, INPUT);
 
-  // Determine wake reason
-  esp_sleep_wakeup_cause_t wakeReason = esp_sleep_get_wakeup_cause();
-  Serial.printf("Wake reason: %d\n", (int)wakeReason);
+    loadCalibrations();
+    computePolynomialFrom3Points();
+    setupMQTT();
 
-  // If we woke from timer, perform a quick measure and publish MQTT, then go back to sleep
-  if (wakeReason == ESP_SLEEP_WAKEUP_TIMER) {
-    Serial.println("Periodic wake: quick measure -> MQTT -> sleep");
-    periodicMeasureAndMaybeMQTT_andSleep();
-    // should not return
-  }
+    esp_sleep_wakeup_cause_t wakeReason = esp_sleep_get_wakeup_cause();
+    Serial.printf("Wake reason: %d\n", (int)wakeReason);
 
-  // Otherwise cold boot or manual reset -> enter interactive mode by default
-  // Connect WiFi and run interactive UI
-  startInteractiveMode();
+    // Si réveil périodique
+    if (wakeReason == ESP_SLEEP_WAKEUP_TIMER) {
+        Serial.println("Periodic wake: quick measure -> MQTT -> sleep");
+        periodicMeasureAndMaybeMQTT_andSleep();
+    } else {
+        // Cold boot ou réveil manuel
+        Serial.println("Cold boot or manual wake -> interactive mode");
+        startInteractiveMode();
+    }
 }
 
 void loop() {
-  server.handleClient();
-  M5.update();
-
-  // --- Détection tactile ---
-  if (M5.Touch.getDetail().isPressed()) {
-    lastTouchMillis = millis();
-    if (!screenActive) {
-      // Réactivation de l’écran et du WiFi
-      screenActive = true;
-      M5.Display.wakeup();
-      M5.Display.setBrightness(180);
-      WiFi.mode(WIFI_STA);
-      WiFi.begin(WIFI_SSID, WIFI_PASS);
+    if (interactiveMode) {
+        server.handleClient();
+        if ((uint32_t)(millis() - interactiveLastTouchMs) > INTERACTIVE_TIMEOUT_MS) {
+            stopInteractiveModeAndSleep();
+        }
     }
-  }
-
-  // --- Gestion inactivité ---
-  if (screenActive && (millis() - lastTouchMillis > INACTIVITY_TIMEOUT_MS)) {
-    goToDeepSleep();
-  }
-
-  // --- Mesure périodique ---
-  static unsigned long lastMeasure = 0;
-  if (millis() - lastMeasure > SLEEP_INTERVAL_SEC * 1000UL) {
-    lastMeasure = millis();
-    // lancer une mesure et calcul polynomial ici
-    float m = measureDistanceCmOnce();
-    float est = estimateHeightFromMeasured(m);
-    {
-      std::lock_guard<std::mutex> lock(distMutex);
-      lastMeasuredCm = m;
-      lastEstimatedHeight = est;
-    }
-
-    // futur: envoi MQTT ici
-    Serial.printf("MQTT send (disabled): %.1f cm\n", est);
-  }
-
-  delay(10);
+    delay(10);
 }
