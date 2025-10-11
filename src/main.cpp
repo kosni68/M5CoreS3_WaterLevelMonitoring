@@ -1,4 +1,4 @@
-// M5CoreS3_JSN_SR04T_Calib_Polynomial_Chart.ino
+// M5CoreS3_JSN_SR04T_Calib_Polynomial_Chart_Brute.ino
 #include <M5CoreS3.h>
 #include <WiFi.h>
 #include <WebServer.h>
@@ -6,8 +6,8 @@
 #include <mutex>
 
 // -------- CONFIG ----------
-const char* WIFI_SSID = "TON_SSID";
-const char* WIFI_PASS = "TON_MOT_DE_PASSE";
+const char* WIFI_SSID = "Freebox-22A0D2";
+const char* WIFI_PASS = "NicoCindy22";
 
 const int trigPin = 9;   
 const int echoPin = 8;   
@@ -20,21 +20,23 @@ std::mutex distMutex;
 
 volatile float lastMeasuredCm = -1.0f;   
 volatile float lastEstimatedHeight = -1.0f; 
+volatile unsigned long lastDurationUs = 0; // valeur brute du capteur
 
 float calib_m[3] = {0.0f, 0.0f, 0.0f};   
 float calib_h[3] = {50.0f, 100.0f, 150.0f}; 
 
 double a_coef = 0.0, b_coef = 0.0, c_coef = 0.0;
 
-// ---------- UTIL: mesure ultrason ----------
+// ---------- UTIL ----------
 float measureDistanceCmOnce() {
   digitalWrite(trigPin, LOW);
-  delayMicroseconds(2);
+  delayMicroseconds(5);
   digitalWrite(trigPin, HIGH);
-  delayMicroseconds(10);
+  delayMicroseconds(20);
   digitalWrite(trigPin, LOW);
 
   unsigned long duration = pulseIn(echoPin, HIGH, 30000UL);
+  lastDurationUs = duration; // stocke la valeur brute
   if (duration == 0) return -1.0f; 
   return duration * 0.01715f;
 }
@@ -97,15 +99,16 @@ float estimateHeightFromMeasured(float x) {
 
 // ---------- WEB HANDLERS ----------
 String makeJsonDistance() {
-  float m, h;
+  float m, h; unsigned long dur;
   {
     std::lock_guard<std::mutex> lock(distMutex);
     m = lastMeasuredCm;
     h = lastEstimatedHeight;
+    dur = lastDurationUs;
   }
   char buf[128];
-  if (m < 0) sprintf(buf, "{\"measured_cm\":null,\"estimated_cm\":null}");
-  else sprintf(buf, "{\"measured_cm\":%.2f,\"estimated_cm\":%.2f}", m, h);
+  if (m < 0) sprintf(buf, "{\"measured_cm\":null,\"estimated_cm\":null,\"duration_us\":null}");
+  else sprintf(buf, "{\"measured_cm\":%.2f,\"estimated_cm\":%.2f,\"duration_us\":%lu}", m, h, dur);
   return String(buf);
 }
 
@@ -121,6 +124,7 @@ String makeJsonCalibs() {
   return s;
 }
 
+// ---------- HTML + Chart.js ----------
 void handleRoot(){
   String page = R"rawliteral(
 <!doctype html>
@@ -128,22 +132,23 @@ void handleRoot(){
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>M5 Puits - Calib + Chart</title>
+<title>M5 Puits - Chart Brute</title>
 <style>
 body{font-family:sans-serif;padding:10px} 
 .big{font-size:1.5rem;font-weight:700} 
 button{margin:6px} 
-canvas{max-width:100%;}
+canvas{max-width:100%;height:150px;} /* hauteur réduite */
 </style>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
 <h2>M5 Puits - Calibration & Chart</h2>
-<div>Mesuré (capteur): <span id="meas" class="big">--</span> cm</div>
-<div>Hauteur estimée: <span id="est" class="big">--</span> cm</div>
+<div>Mesuré (cm): <span id="meas" class="big">--</span></div>
+<div>Estimé (cm): <span id="est" class="big">--</span></div>
+<div>Brut (µs): <span id="dur" class="big">--</span></div>
 <hr>
 <h3>Graphique temps réel</h3>
-<canvas id="chart" width="400" height="200"></canvas>
+<canvas id="chart" width="400" height="150"></canvas>
 <hr>
 <h3>Points de calibration</h3>
 <div id="calibs"></div>
@@ -158,7 +163,8 @@ const chart=new Chart(ctx,{
     labels:labels,
     datasets:[
       {label:'Mesuré cm',data:measData,borderColor:'blue',fill:false,yAxisID:'y1'},
-      {label:'Estimé cm',data:estData,borderColor:'green',fill:false,yAxisID:'y2'}
+      {label:'Estimé cm',data:estData,borderColor:'green',fill:false,yAxisID:'y1'},
+      {label:'Durée µs',data:durData,borderColor:'red',fill:false,yAxisID:'y2'}
     ]
   },
   options:{
@@ -172,12 +178,15 @@ const chart=new Chart(ctx,{
 
 function refreshDistance(){
   fetch('/distance').then(r=>r.json()).then(j=>{
-    document.getElementById('meas').innerText = j.measured_cm!==null?j.measured_cm.toFixed(1):'--';
-    document.getElementById('est').innerText = j.estimated_cm!==null?j.estimated_cm.toFixed(1):'--';
+    document.getElementById('meas').innerText=j.measured_cm!==null?j.measured_cm.toFixed(1):'--';
+    document.getElementById('est').innerText=j.estimated_cm!==null?j.estimated_cm.toFixed(1):'--';
+    document.getElementById('dur').innerText=j.duration_us!==null?j.duration_us:'--';
+
     const t=(new Date()).toLocaleTimeString();
-    labels.push(t); if(labels.length>50){labels.shift();measData.shift();estData.shift();}
+    labels.push(t); if(labels.length>50){labels.shift();measData.shift();estData.shift();durData.shift();}
     measData.push(j.measured_cm||0);
     estData.push(j.estimated_cm||0);
+    durData.push(j.duration_us||0);
     chart.update();
   });
 }
@@ -187,44 +196,43 @@ function refreshCalibs(){
     let arr = JSON.parse(t);
     let html='';
     arr.forEach(function(c){
-      html += 'C'+(c.index+1)+': Mesuré = <b>'+ (c.measured>0 ? c.measured.toFixed(1) : '--') + ' cm</b> ' +
-              'Hauteur réelle (cm): <input id="h'+c.index+'" value="'+ c.height +'"> ' +
+      html += 'C'+(c.index+1)+': Mesuré = <b>'+ (c.measured>0 ? c.measured.toFixed(1) : '--') + 
+              ' cm</b> Hauteur réelle (cm): <input id="h'+c.index+'" value="'+ c.height +'"> ' +
               '<button onclick="save('+c.index+')">Sauver current</button><br>';
     });
-    document.getElementById('calibs').innerHTML = html;
+    document.getElementById('calibs').innerHTML=html;
   });
 }
 
 function save(idx){
-  const val = document.getElementById('h'+idx).value;
-  fetch('/save_calib?id='+idx+'&height='+encodeURIComponent(val), { method:'POST' })
-    .then(r=>r.json()).then(j=>{ if(j.ok){ alert('Saved'); refreshCalibs(); } else alert('Error'); });
+  const val=document.getElementById('h'+idx).value;
+  fetch('/save_calib?id='+idx+'&height='+encodeURIComponent(val),{method:'POST'})
+    .then(r=>r.json()).then(j=>{if(j.ok){alert('Saved');refreshCalibs();}else alert('Error');});
 }
 
 function clearCalib(){
-  fetch('/clear_calib',{method:'POST'}).then(r=>r.json()).then(j=>{ alert('Calibrations cleared'); refreshCalibs(); });
+  fetch('/clear_calib',{method:'POST'}).then(r=>r.json()).then(j=>{alert('Calibrations cleared');refreshCalibs();});
 }
 
 setInterval(refreshDistance,800);
 setInterval(refreshCalibs,5000);
-refreshDistance();
-refreshCalibs();
+refreshDistance(); refreshCalibs();
 </script>
 </body>
 </html>
 )rawliteral";
-  server.send(200, "text/html", page);
+  server.send(200,"text/html",page);
 }
 
-void handleDistanceApi(){ server.send(200, "application/json", makeJsonDistance()); }
-void handleCalibsApi(){ server.send(200, "application/json", makeJsonCalibs()); }
+// ---------- ROUTES ----------
+void handleDistanceApi(){ server.send(200,"application/json",makeJsonDistance()); }
+void handleCalibsApi(){ server.send(200,"application/json",makeJsonCalibs()); }
 
 void handleSaveCalib(){
-  if(!server.hasArg("id")||!server.hasArg("height")) { server.send(400,"application/json","{\"ok\":false}"); return;}
+  if(!server.hasArg("id")||!server.hasArg("height")){server.send(400,"application/json","{\"ok\":false}");return;}
   int id=server.arg("id").toInt();
   float h=server.arg("height").toFloat();
-  float m;
-  { std::lock_guard<std::mutex> lock(distMutex); m=lastMeasuredCm; }
+  float m; { std::lock_guard<std::mutex> lock(distMutex); m=lastMeasuredCm; }
   if(m<=0.0f){ server.send(200,"application/json","{\"ok\":false}"); return; }
   saveCalibrationToNVS(id,m,h);
   computePolynomialFrom3Points();
@@ -248,8 +256,7 @@ void sensorTask(void *pv){
 
 void displayTask(void *pv){
   for(;;){
-    float m, est;
-    { std::lock_guard<std::mutex> lock(distMutex); m=lastMeasuredCm; est=lastEstimatedHeight; }
+    float m, est; { std::lock_guard<std::mutex> lock(distMutex); m=lastMeasuredCm; est=lastEstimatedHeight; }
     M5.update();
     M5.Display.fillRect(0,0,M5.Display.width(),80,TFT_BLACK);
     M5.Display.setCursor(6,6); M5.Display.setTextSize(3);
