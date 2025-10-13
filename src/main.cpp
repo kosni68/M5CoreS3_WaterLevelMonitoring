@@ -286,8 +286,19 @@ void handleRoot() {
 <h3>Cuve levels</h3>
 Vide: <input id="v" value="123"> cm Pleine: <input id="p" value="42"> cm <button onclick="saveCuve()">Save</button>
 <button onclick="clearCalib()">Clear calibs</button>
+<button onclick="sendMQTT()">Envoyer MQTT</button>
 
 <script>
+function sendMQTT(){
+  fetch('/send_mqtt', {method:'POST'})
+    .then(r=>r.json())
+    .then(j=>{
+      if(j.ok) alert('MQTT envoyé !');
+      else alert('Échec de l’envoi MQTT.');
+    })
+    .catch(e=>alert('Erreur de requête MQTT: '+e));
+}
+
 let labels=[], measData=[], estData=[], durData=[];
 const ctx=document.getElementById('chart').getContext('2d');
 const chart=new Chart(ctx,{type:'line',data:{labels:labels,datasets:[
@@ -331,6 +342,12 @@ refreshDistance(); refreshCalibs();
 
 void handleDistanceApi() { server.send(200, "application/json", makeJsonDistance()); }
 void handleCalibsApi()  { server.send(200, "application/json", makeJsonCalibs()); }
+
+void handleSendMQTT() {
+  bool ok = publishMQTT_measure();
+  String resp = String("{\"ok\":") + (ok ? "true" : "false") + "}";
+  server.send(200, "application/json", resp);
+}
 
 void handleSaveCalib() {
   if (!server.hasArg("id") || !server.hasArg("height")) { server.send(400, "application/json", "{\"ok\":false}"); return; }
@@ -536,6 +553,7 @@ void startInteractiveMode() {
   server.on("/save_calib", HTTP_POST, handleSaveCalib);
   server.on("/clear_calib", HTTP_POST, handleClearCalib);
   server.on("/setCuve", HTTP_POST, handleSetCuve);
+  server.on("/send_mqtt", HTTP_POST, handleSendMQTT);
   server.begin();
 
   // start interactive tasks
