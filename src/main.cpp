@@ -8,6 +8,11 @@
   - MQTT disabled by default (ENABLE_MQTT=false)
 */
 
+#define DEBUG true
+#define DEBUG_PRINT(x)  if(DEBUG){ Serial.println(x); }
+#define DEBUG_PRINTF(...) if(DEBUG){ Serial.printf(__VA_ARGS__); }
+
+
 #include <M5CoreS3.h>
 #include <WiFi.h>
 #include <WebServer.h>
@@ -21,11 +26,11 @@ const char* WIFI_SSID = "Freebox-22A0D2";
 const char* WIFI_PASS = "NicoCindy22";
 
 // MQTT (disabled by default)
-const bool ENABLE_MQTT = false;
-const char* MQTT_HOST = "192.168.1.10"; // exemple
+const bool ENABLE_MQTT = true;
+const char* MQTT_HOST = "192.168.1.171";
 const uint16_t MQTT_PORT = 1883;
-const char* MQTT_USER = "";
-const char* MQTT_PASS = "";
+const char* MQTT_USER = "ha-mqtt";
+const char* MQTT_PASS = "ha-mqtt_68440";
 const char* MQTT_TOPIC = "m5stack/puits";
 
 // pins + timing
@@ -122,23 +127,45 @@ void setupMQTT() {
 }
 
 bool publishMQTT_measure() {
-  if (!ENABLE_MQTT) return true;
+  if (!ENABLE_MQTT) {
+    DEBUG_PRINT("[MQTT] MQTT disabled -> skip publish");
+    return true;
+  }
+
   if (!mqttClient.connected()) {
-    // try connect
     String clientId = String("M5CoreS3-") + String((uint32_t)ESP.getEfuseMac(), HEX);
-    if (strlen(MQTT_USER) == 0) {
-      if (!mqttClient.connect(clientId.c_str())) return false;
+    DEBUG_PRINTF("[MQTT] Connecting to %s:%d as %s\n", MQTT_HOST, MQTT_PORT, clientId.c_str());
+    bool connected;
+    if (strlen(MQTT_USER) == 0)
+      connected = mqttClient.connect(clientId.c_str());
+    else
+      connected = mqttClient.connect(clientId.c_str(), MQTT_USER, MQTT_PASS);
+
+    if (!connected) {
+      DEBUG_PRINTF("[MQTT] Connection failed, state=%d\n", mqttClient.state());
+      return false;
     } else {
-      if (!mqttClient.connect(clientId.c_str(), MQTT_USER, MQTT_PASS)) return false;
+      DEBUG_PRINT("[MQTT] Connected!");
     }
   }
-  // prepare JSON
+
   float m, h; unsigned long dur;
   { std::lock_guard<std::mutex> lock(distMutex); m = lastMeasuredCm; h = lastEstimatedHeight; dur = lastDurationUs; }
+
   char payload[256];
   snprintf(payload, sizeof(payload), "{\"measured_cm\":%.2f,\"estimated_cm\":%.2f,\"duration_us\":%lu}", m, h, dur);
+  DEBUG_PRINTF("[MQTT] Publishing to topic %s: %s\n", MQTT_TOPIC, payload);
+
   bool ok = mqttClient.publish(MQTT_TOPIC, payload);
+
+  if (!ok) {
+    DEBUG_PRINT("[MQTT] Publish failed!");
+  } else {
+    DEBUG_PRINT("[MQTT] Publish success!");
+  }
+
   mqttClient.disconnect();
+  DEBUG_PRINT("[MQTT] Disconnected");
   return ok;
 }
 
@@ -353,37 +380,47 @@ void drawGaugeFill(int percent) {
 }
 
 // ======= Tasks =======
+
 void periodicMeasureAndMaybeMQTT_andSleep() {
-  // Called when wake from timer and not entering interactive mode
-  // Perform a quick measurement, optional MQTT send, then deep-sleep again
+  DEBUG_PRINT("[SLEEP] Periodic measurement start");
+
   float avg = 0.0f;
-  // do a few quick samples to stabilize
   for (int i=0;i<3;i++) {
     float m = measureDistanceCmOnce();
+    DEBUG_PRINTF("[SENSOR] Raw measure #%d: %.2f cm\n", i, m);
     avg = runningAverage(m, avg, 0.5f);
     delay(30);
   }
+
+  DEBUG_PRINTF("[SENSOR] Averaged distance: %.2f cm\n", avg);
   float est = NAN;
   if (avg > 0) {
-    // do not rely on polynomial if not computed; best-effort
     est = estimateHeightFromMeasured(avg);
     std::lock_guard<std::mutex> lock(distMutex);
     lastMeasuredCm = avg; lastEstimatedHeight = est;
   }
-  // connect WiFi briefly to publish MQTT (if enabled)
+
   if (ENABLE_MQTT) {
+    DEBUG_PRINT("[WIFI] Connecting to WiFi for MQTT...");
     if (connectWiFiShort(6000)) {
+      DEBUG_PRINT("[WIFI] Connected!");
       setupMQTT();
-      publishMQTT_measure();
+      bool ok = publishMQTT_measure();
+      DEBUG_PRINTF("[MQTT] Publish result: %d\n", ok);
       disconnectWiFiClean();
+      DEBUG_PRINT("[WIFI] Disconnected cleanly");
+    } else {
+      DEBUG_PRINT("[WIFI] WiFi connect failed!");
     }
   }
-  // now go back to deep-sleep (timer)
+
+  DEBUG_PRINTF("[SLEEP] Going to deep sleep for %llu s\n", DEEPSLEEP_INTERVAL_S);
   wokeFromTimer = true;
   esp_sleep_enable_timer_wakeup(DEEPSLEEP_INTERVAL_S * 1000000ULL);
   delay(20);
   esp_deep_sleep_start();
 }
+
 
 // sensor task (used in interactive mode)
 void sensorTask(void *pv) {
@@ -524,37 +561,43 @@ void stopInteractiveModeAndSleep() {
   delay(20);
   esp_deep_sleep_start();
 }
+
 void setup() {
-    Serial.begin(115200);
-    delay(300);
+  Serial.begin(115200);
+  Serial.println("=== M5CoreS3 JSN_SR04T Debug Build ===");
+  Serial.printf("WiFi SSID: %s, MQTT: %s:%d (enabled=%d)\n", WIFI_SSID, MQTT_HOST, MQTT_PORT, ENABLE_MQTT);
 
-    M5.begin();
-    M5.Display.setRotation(1);
-    M5.Display.fillScreen(TFT_BLACK);
-    M5.Display.setTextColor(TFT_WHITE);
-    M5.Display.setTextSize(2);
-    M5.Display.setCursor(6, 6);
-    M5.Display.println("Boot...");
+  delay(300);
 
-    pinMode(trigPin, OUTPUT);
-    pinMode(echoPin, INPUT);
+  M5.begin();
+  M5.Display.setRotation(1);
+  M5.Display.fillScreen(TFT_BLACK);
+  M5.Display.setTextColor(TFT_WHITE);
+  M5.Display.setTextSize(2);
+  M5.Display.setCursor(6, 6);
+  M5.Display.println("Boot...");
 
-    loadCalibrations();
-    computePolynomialFrom3Points();
-    setupMQTT();
+  pinMode(trigPin, OUTPUT);
+  pinMode(echoPin, INPUT);
 
-    esp_sleep_wakeup_cause_t wakeReason = esp_sleep_get_wakeup_cause();
-    Serial.printf("Wake reason: %d\n", (int)wakeReason);
+  loadCalibrations();
+  computePolynomialFrom3Points();
+  setupMQTT();
 
-    // Si réveil périodique
-    if (wakeReason == ESP_SLEEP_WAKEUP_TIMER) {
-        Serial.println("Periodic wake: quick measure -> MQTT -> sleep");
-        periodicMeasureAndMaybeMQTT_andSleep();
-    } else {
-        // Cold boot ou réveil manuel
-        Serial.println("Cold boot or manual wake -> interactive mode");
-        startInteractiveMode();
-    }
+  esp_sleep_wakeup_cause_t wakeReason = esp_sleep_get_wakeup_cause();
+  Serial.printf("Wake reason: %d\n", (int)wakeReason);
+
+  // Si réveil périodique
+  if (wakeReason == ESP_SLEEP_WAKEUP_TIMER) {
+      Serial.println("Periodic wake: quick measure -> MQTT -> sleep");
+      periodicMeasureAndMaybeMQTT_andSleep();
+  } else {
+      // Cold boot ou réveil manuel
+      Serial.println("Cold boot or manual wake -> interactive mode");
+      startInteractiveMode();
+  }
+  
+  publishMQTT_measure();
 }
 
 void loop() {
