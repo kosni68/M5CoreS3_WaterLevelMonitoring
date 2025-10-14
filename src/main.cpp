@@ -12,7 +12,6 @@
 #define DEBUG_PRINT(x)  if(DEBUG){ Serial.println(x); }
 #define DEBUG_PRINTF(...) if(DEBUG){ Serial.printf(__VA_ARGS__); }
 
-
 #include <M5CoreS3.h>
 #include <WiFi.h>
 #include <WebServer.h>
@@ -20,8 +19,7 @@
 #include <PubSubClient.h>   // add to platformio.ini: PubSubClient
 #include <mutex>
 
-//
-// =========== CONFIG =============
+// ---------------- CONFIG ----------------
 const char* WIFI_SSID = "Freebox-22A0D2";
 const char* WIFI_PASS = "NicoCindy22";
 
@@ -42,7 +40,7 @@ const int DISPLAY_PERIOD_MS = 300;
 // deep sleep interval (seconds)
 const uint64_t DEEPSLEEP_INTERVAL_S = 30ULL;
 // interactive timeout (ms) before going back to deep-sleep
-const uint32_t INTERACTIVE_TIMEOUT_MS = 2 * 60 * 1000UL; // 10 minutes
+const uint32_t INTERACTIVE_TIMEOUT_MS = 1 * 60 * 1000UL; // 10 minutes (fixed)
 
 // Conserve cette variable dans la mémoire RTC (survit au deep sleep)
 RTC_DATA_ATTR bool wokeFromTimer = false;
@@ -50,7 +48,10 @@ RTC_DATA_ATTR bool wokeFromTimer = false;
 // =========== GLOBALS ===========
 WebServer server(80);
 Preferences preferences;
+// NOTE: we keep std::mutex as in ton code but we add protections pour MQTT et Display
 std::mutex distMutex;
+std::mutex mqttMutex;
+std::mutex displayMutex;
 
 // measurement state
 volatile float lastMeasuredCm = -1.0f;
@@ -83,7 +84,10 @@ uint32_t interactiveLastTouchMs = 0;
 WiFiClient wifiClient;
 PubSubClient mqttClient(wifiClient);
 
-// forward declarations
+// mqtt busy flag to prevent concurrent publishes
+volatile bool mqttBusy = false;
+
+// forward declarations (toutes tes fonctions préservées)
 float measureDistanceCmOnce();
 float runningAverage(float newVal, float prevAvg, float alpha=0.25f);
 void loadCalibrations();
@@ -100,6 +104,7 @@ void handleCalibsApi();
 void handleSaveCalib();
 void handleClearCalib();
 void handleSetCuve();
+void handleSendMQTT();
 
 // ========= Helper network functions =========
 bool connectWiFiShort(uint32_t timeoutMs=8000) {
@@ -118,6 +123,7 @@ void disconnectWiFiClean() {
   if (WiFi.status() == WL_CONNECTED) {
     WiFi.disconnect(true, true);
     WiFi.mode(WIFI_OFF);
+    delay(50); // give some time for the stack to close
   }
 }
 
@@ -126,12 +132,40 @@ void setupMQTT() {
   mqttClient.setServer(MQTT_HOST, MQTT_PORT);
 }
 
+// NOTE: we protect the mqtt flow with mqttMutex and mqttBusy
 bool publishMQTT_measure() {
+  // Prevent re-entrancy
+  {
+    std::lock_guard<std::mutex> lock(mqttMutex);
+    if (mqttBusy) {
+      DEBUG_PRINT("[MQTT] Busy - skipping publish");
+      return false;
+    }
+    mqttBusy = true;
+  }
+
+  // Optional safe display update: try to lock displayMutex and draw; if not, skip display write.
+  bool drewStatus = false;
+  if (displayMutex.try_lock()) {
+    if (M5.Display.isReadable()) {
+      M5.Lcd.fillScreen(BLACK);
+      M5.Lcd.setTextColor(GREEN);
+      M5.Lcd.setTextDatum(MC_DATUM);
+      M5.Lcd.drawString("MQTT...", M5.Lcd.width()/2, M5.Lcd.height()/2);
+      drewStatus = true;
+    }
+    displayMutex.unlock();
+  }
+
   if (!ENABLE_MQTT) {
     DEBUG_PRINT("[MQTT] MQTT disabled -> skip publish");
+    // release mqttBusy
+    std::lock_guard<std::mutex> lock(mqttMutex);
+    mqttBusy = false;
     return true;
   }
 
+  bool ok = false;
   if (!mqttClient.connected()) {
     String clientId = String("M5CoreS3-") + String((uint32_t)ESP.getEfuseMac(), HEX);
     DEBUG_PRINTF("[MQTT] Connecting to %s:%d as %s\n", MQTT_HOST, MQTT_PORT, clientId.c_str());
@@ -143,6 +177,9 @@ bool publishMQTT_measure() {
 
     if (!connected) {
       DEBUG_PRINTF("[MQTT] Connection failed, state=%d\n", mqttClient.state());
+      // reset busy
+      std::lock_guard<std::mutex> lock(mqttMutex);
+      mqttBusy = false;
       return false;
     } else {
       DEBUG_PRINT("[MQTT] Connected!");
@@ -156,7 +193,11 @@ bool publishMQTT_measure() {
   snprintf(payload, sizeof(payload), "{\"measured_cm\":%.2f,\"estimated_cm\":%.2f,\"duration_us\":%lu}", m, h, dur);
   DEBUG_PRINTF("[MQTT] Publishing to topic %s: %s\n", MQTT_TOPIC, payload);
 
-  bool ok = mqttClient.publish(MQTT_TOPIC, payload);
+  ok = mqttClient.publish(MQTT_TOPIC, payload);
+
+  // ensure the library processes the packet and receives ACK if QoS0/1
+  mqttClient.loop();
+  delay(60); // small wait to allow ACK/packet handling
 
   if (!ok) {
     DEBUG_PRINT("[MQTT] Publish failed!");
@@ -164,9 +205,39 @@ bool publishMQTT_measure() {
     DEBUG_PRINT("[MQTT] Publish success!");
   }
 
+  // Disconnect gracefully
   mqttClient.disconnect();
   DEBUG_PRINT("[MQTT] Disconnected");
+
+  // Optionally update display with result (non-blocking if possible)
+  if (displayMutex.try_lock()) {
+    if (M5.Display.isReadable()) {
+      M5.Lcd.fillScreen(BLACK);
+      M5.Lcd.setTextColor(ok ? GREEN : RED);
+      M5.Lcd.setTextDatum(MC_DATUM);
+      M5.Lcd.drawString(ok ? "MQTT OK" : "MQTT FAIL", M5.Lcd.width()/2, M5.Lcd.height()/2);
+      delay(800);
+      // restore later display will redraw
+    }
+    displayMutex.unlock();
+  }
+
+  // release busy flag
+  {
+    std::lock_guard<std::mutex> lock(mqttMutex);
+    mqttBusy = false;
+  }
   return ok;
+}
+
+void mqttPeriodicTask(void *pv) {
+  for (;;) {
+    if (WiFi.status() == WL_CONNECTED && ENABLE_MQTT) {
+      bool ok = publishMQTT_measure();
+      Serial.printf("[MQTT_TASK] Publish result: %d\n", ok);
+    }
+    vTaskDelay(pdMS_TO_TICKS(30000)); // toutes les 30 secondes
+  }
 }
 
 // ========= Measurement =========
@@ -344,6 +415,14 @@ void handleDistanceApi() { server.send(200, "application/json", makeJsonDistance
 void handleCalibsApi()  { server.send(200, "application/json", makeJsonCalibs()); }
 
 void handleSendMQTT() {
+  // protect against concurrent publishes
+  {
+    std::lock_guard<std::mutex> lock(mqttMutex);
+    if (mqttBusy) {
+      server.send(200, "application/json", "{\"ok\":false,\"err\":\"mqtt_busy\"}");
+      return;
+    }
+  }
   bool ok = publishMQTT_measure();
   String resp = String("{\"ok\":") + (ok ? "true" : "false") + "}";
   server.send(200, "application/json", resp);
@@ -413,8 +492,10 @@ void periodicMeasureAndMaybeMQTT_andSleep() {
   float est = NAN;
   if (avg > 0) {
     est = estimateHeightFromMeasured(avg);
-    std::lock_guard<std::mutex> lock(distMutex);
-    lastMeasuredCm = avg; lastEstimatedHeight = est;
+    {
+      std::lock_guard<std::mutex> lock(distMutex);
+      lastMeasuredCm = avg; lastEstimatedHeight = est;
+    }
   }
 
   if (ENABLE_MQTT) {
@@ -433,6 +514,11 @@ void periodicMeasureAndMaybeMQTT_andSleep() {
 
   DEBUG_PRINTF("[SLEEP] Going to deep sleep for %llu s\n", DEEPSLEEP_INTERVAL_S);
   wokeFromTimer = true;
+
+  // Éteindre écran proprement
+  M5.Display.sleep();
+  M5.Display.setBrightness(0);
+
   esp_sleep_enable_timer_wakeup(DEEPSLEEP_INTERVAL_S * 1000000ULL);
   delay(20);
   esp_deep_sleep_start();
@@ -459,8 +545,12 @@ void sensorTask(void *pv) {
 void displayTask(void *pv) {
   // initial draw
   M5.update();
-  M5.Display.fillScreen(TFT_BLACK);
-  drawGaugeBackground();
+  // protect display writes with displayMutex
+  {
+    std::lock_guard<std::mutex> lk(displayMutex);
+    M5.Display.fillScreen(TFT_BLACK);
+    drawGaugeBackground();
+  }
   prevPercent = -1;
   prevMeasured = NAN; prevEstimated = NAN; prevDuration = ULONG_MAX;
   prevCuveVide = cuveVide; prevCuvePleine = cuvePleine;
@@ -479,6 +569,7 @@ void displayTask(void *pv) {
     if (cuveVide != prevCuveVide || cuvePleine != prevCuvePleine) needText = true;
 
     if (needText) {
+      std::lock_guard<std::mutex> lk(displayMutex);
       M5.Display.fillRect(0, 0, gaugeX-8, 120, TFT_BLACK);
       M5.Display.setTextSize(3); M5.Display.setTextColor(TFT_WHITE);
       M5.Display.setCursor(8, 8);
@@ -490,9 +581,8 @@ void displayTask(void *pv) {
       M5.Display.setTextSize(2);
       M5.Display.printf("Vide: %.1f\n", cuveVide);
       M5.Display.printf("Pleine: %.1f\n", cuvePleine);
-
-      prevMeasured = measured; prevEstimated = estimated; prevDuration = duration;
-      prevCuveVide = cuveVide; prevCuvePleine = cuvePleine;
+    prevMeasured = measured; prevEstimated = estimated; prevDuration = duration;
+    prevCuveVide = cuveVide; prevCuvePleine = cuvePleine;
     }
 
     // gauge percent computation
@@ -508,22 +598,26 @@ void displayTask(void *pv) {
     } else percent = 0;
 
     if (percent != prevPercent) {
+      std::lock_guard<std::mutex> lk(displayMutex);
       drawGaugeFill(percent);
       prevPercent = percent;
     }
 
     // display IP at bottom if connected
-    if (WiFi.status() == WL_CONNECTED) {
-      String ip = WiFi.localIP().toString();
-      M5.Display.fillRect(0, M5.Display.height()-24, M5.Display.width(), 24, TFT_BLACK);
-      M5.Display.setTextSize(2);
-      M5.Display.setCursor(8, M5.Display.height()-22);
-      M5.Display.printf("IP: %s", ip.c_str());
-    } else {
-      M5.Display.fillRect(0, M5.Display.height()-24, M5.Display.width(), 24, TFT_BLACK);
-      M5.Display.setTextSize(2);
-      M5.Display.setCursor(8, M5.Display.height()-22);
-      M5.Display.print("IP: --");
+    {
+      std::lock_guard<std::mutex> lk(displayMutex);
+      if (WiFi.status() == WL_CONNECTED) {
+        String ip = WiFi.localIP().toString();
+        M5.Display.fillRect(0, M5.Display.height()-24, M5.Display.width(), 24, TFT_BLACK);
+        M5.Display.setTextSize(2);
+        M5.Display.setCursor(8, M5.Display.height()-22);
+        M5.Display.printf("IP: %s", ip.c_str());
+      } else {
+        M5.Display.fillRect(0, M5.Display.height()-24, M5.Display.width(), 24, TFT_BLACK);
+        M5.Display.setTextSize(2);
+        M5.Display.setCursor(8, M5.Display.height()-22);
+        M5.Display.print("IP: --");
+      }
     }
 
     // check touch to update interactiveLastTouchMs
@@ -558,22 +652,23 @@ void startInteractiveMode() {
 
   // start interactive tasks
   xTaskCreatePinnedToCore(sensorTask, "sensorTask", 4096, NULL, 2, NULL, 1);
-  xTaskCreatePinnedToCore(displayTask, "displayTask", 4096, NULL, 1, NULL, 1);
+  xTaskCreatePinnedToCore(displayTask, "displayTask", 8192, NULL, 1, NULL, 1);
+  // If you want periodic MQTT during interactive mode, un-comment below and tune stack size:
+  // xTaskCreatePinnedToCore(mqttPeriodicTask, "mqttPeriodicTask", 8192, NULL, 1, NULL, 1);
 
   interactiveMode = true;
   interactiveLastTouchMs = millis();
 }
 
 void stopInteractiveModeAndSleep() {
-  // stop webserver and go to deep-sleep
   server.stop();
   disconnectWiFiClean();
-  // small delay
   delay(50);
 
-  M5.Power.Axp2101.powerOff();
+  // Éteindre écran proprement
+  M5.Display.sleep();
+  M5.Display.setBrightness(0);
 
-  // schedule deep sleep
   wokeFromTimer = false;
   esp_sleep_enable_timer_wakeup(DEEPSLEEP_INTERVAL_S * 1000000ULL);
   delay(20);
@@ -583,17 +678,20 @@ void stopInteractiveModeAndSleep() {
 void setup() {
   Serial.begin(115200);
   Serial.println("=== M5CoreS3 JSN_SR04T Debug Build ===");
-  Serial.printf("WiFi SSID: %s, MQTT: %s:%d (enabled=%d)\n", WIFI_SSID, MQTT_HOST, MQTT_PORT, ENABLE_MQTT);
+  Serial.printf("WiFi SSID: %s, MQTT: %s:%d (enabled=%d)\n", WIFI_SSID, MQTT_HOST, MQTT_PORT, (int)ENABLE_MQTT);
 
   delay(300);
 
   M5.begin();
   M5.Display.setRotation(1);
-  M5.Display.fillScreen(TFT_BLACK);
-  M5.Display.setTextColor(TFT_WHITE);
-  M5.Display.setTextSize(2);
-  M5.Display.setCursor(6, 6);
-  M5.Display.println("Boot...");
+  {
+    std::lock_guard<std::mutex> lk(displayMutex);
+    M5.Display.fillScreen(TFT_BLACK);
+    M5.Display.setTextColor(TFT_WHITE);
+    M5.Display.setTextSize(2);
+    M5.Display.setCursor(6, 6);
+    M5.Display.println("Boot...");
+  }
 
   pinMode(trigPin, OUTPUT);
   pinMode(echoPin, INPUT);
@@ -614,8 +712,9 @@ void setup() {
       Serial.println("Cold boot or manual wake -> interactive mode");
       startInteractiveMode();
   }
-  
-  publishMQTT_measure();
+
+  // DO NOT call publishMQTT_measure() here unguarded; it could be called earlier in periodic path.
+  // publishMQTT_measure(); // <- removed to avoid race on boot
 }
 
 void loop() {
