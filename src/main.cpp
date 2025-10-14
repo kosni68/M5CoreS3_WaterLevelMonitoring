@@ -21,7 +21,6 @@ void setup() {
     DEBUG_PRINT("Booting M5CoreS3 JSN_SR04T...");
 
     initSensor();
-    initDisplay();
     loadCalibrations();
     computePolynomialFrom3Points();
     setupMQTT();
@@ -39,6 +38,8 @@ void setup() {
         goDeepSleep();
     } else {
         Serial.println("interactive mode");
+        
+        initDisplay();
 
         startWebServer();
 
