@@ -1,8 +1,5 @@
 #include <Arduino.h>
 
-#include <WiFi.h>
-#include <WebServer.h>
-
 #include "config.h"
 #include "measurement.h"
 #include "display.h"
@@ -10,8 +7,6 @@
 #include "web_server.h"
 #include "power.h"
 #include "utils.h"
-
-WebServer server(80);
 
 bool interactiveMode = false;
 uint32_t interactiveLastTouchMs = 0;
@@ -53,9 +48,7 @@ void setup() {
 
 void loop() {
     if (interactiveMode) {
-        server.handleClient();
         if ((uint32_t)(millis() - interactiveLastTouchMs) > INTERACTIVE_TIMEOUT_MS) {
-            server.stop();
             disconnectWiFiClean();
             delay(50);
             goDeepSleep();

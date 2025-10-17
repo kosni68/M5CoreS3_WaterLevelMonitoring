@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>M5 Puits - Dashboard</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <h2>M5 Puits - Dashboard</h2>
+  <div>
+    Mesuré: <span id="meas">--</span> cm &nbsp;
+    Estimé: <span id="est">--</span> cm &nbsp;
+    Brut: <span id="dur">--</span> µs
+  </div>
+  <hr>
+  <canvas id="chart" width="400" height="150"></canvas>
+  <hr>
+
+  <div id="calibs"></div>
+
+  <h3>Cuve levels</h3>
+  Vide: <input id="v" value="123"> cm
+  Pleine: <input id="p" value="42"> cm
+  <button onclick="saveCuve()">Save</button>
+  <button onclick="clearCalib()">Clear calibs</button>
+  <button onclick="sendMQTT()">Envoyer MQTT</button>
+
+  <script src="/script.js"></script>
+</body>
+</html>
