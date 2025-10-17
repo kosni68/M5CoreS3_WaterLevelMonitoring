@@ -7,6 +7,15 @@ input {
   width: 70px;
 }
 
+a button {
+  margin: 5px 0;
+  background-color: #28a745; /* vert */
+}
+
+a button:hover {
+  background-color: #218838;
+}
+
 button {
   margin: 5px;
   padding: 5px 10px;
