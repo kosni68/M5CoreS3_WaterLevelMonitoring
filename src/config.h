@@ -28,8 +28,7 @@ const int echoPin = 8;
 // ---------- Timing ----------
 const int SENSOR_PERIOD_MS = 200;
 const int DISPLAY_PERIOD_MS = 300;
-const uint64_t DEEPSLEEP_INTERVAL_S = 30ULL;
-const uint32_t INTERACTIVE_TIMEOUT_MS = 1 * 60 * 1000UL; // 10 min
+extern uint32_t interactiveLastTouchMs;
 
 extern float lastMeasuredCm;
 extern float lastEstimatedHeight;

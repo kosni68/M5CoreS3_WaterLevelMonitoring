@@ -81,6 +81,14 @@ function clearCalib(){
     .then(j=>{ alert('Cleared'); refreshCalibs();});
 }
 
+function sendPing() {
+  fetch('/ping', {
+    method: 'POST',
+    body: new URLSearchParams({page: 'dashboard'})
+  });
+}
+
+setInterval(sendPing, 10000);
 setInterval(refreshDistance,800);
 setInterval(refreshCalibs,5000);
 refreshDistance();

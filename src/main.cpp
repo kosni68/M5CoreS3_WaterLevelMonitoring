@@ -1,6 +1,7 @@
 #include <Arduino.h>
 
 #include "config.h"
+#include "config_manager.h"
 #include "measurement.h"
 #include "display.h"
 #include "mqtt.h"
@@ -9,7 +10,6 @@
 #include "utils.h"
 
 bool interactiveMode = false;
-uint32_t interactiveLastTouchMs = 0;
 
 void setup() {
     Serial.begin(115200);
@@ -48,7 +48,7 @@ void setup() {
 
 void loop() {
     if (interactiveMode) {
-        if ((uint32_t)(millis() - interactiveLastTouchMs) > INTERACTIVE_TIMEOUT_MS) {
+        if ((uint32_t)(millis() - interactiveLastTouchMs) > ConfigManager::instance().getConfig().interactive_timeout_ms) {
             disconnectWiFiClean();
             delay(50);
             goDeepSleep();

@@ -98,6 +98,16 @@ void startWebServer() {
         request->send(response);
     });
 
+    server.on("/ping", HTTP_POST, [](AsyncWebServerRequest *request){
+    String page = request->arg("page");
+    if(page == "dashboard" ){        
+        interactiveLastTouchMs = millis();
+    } else if(page == "config"){
+        interactiveLastTouchMs = millis();
+    }
+        request->send(200, "application/json; charset=utf-8", "{\"ok\":true}");
+    });
+
     // --- Routes API existantes ---
     server.on("/distance", HTTP_GET, [](AsyncWebServerRequest *request){ handleDistanceApi(request); });
     server.on("/calibs", HTTP_GET, [](AsyncWebServerRequest *request){ handleCalibsApi(request); });

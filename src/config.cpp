@@ -13,6 +13,8 @@ const char* MQTT_USER = "ha-mqtt";
 const char* MQTT_PASS = "ha-mqtt_68440";
 const char* MQTT_TOPIC = "m5stack/puits";
 
+uint32_t interactiveLastTouchMs;
+
 std::mutex distMutex;
 std::mutex mqttMutex; 
 std::mutex displayMutex;

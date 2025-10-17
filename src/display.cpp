@@ -162,12 +162,7 @@ void displayTask(void *pv) {
       }
     }
 
-    // check touch to update interactiveLastTouchMs
     M5.update();
-    // Note: touchscreen is via I2C; M5.Touch is available in M5CoreS3 lib.
-    /*if (M5.Touch.getDetail().isPressed()) {
-      interactiveLastTouchMs = millis();
-    }*/
 
     vTaskDelay(pdMS_TO_TICKS(DISPLAY_PERIOD_MS));
   }

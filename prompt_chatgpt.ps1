@@ -4,13 +4,19 @@
 
 # Répertoires à inclure
 $dirs = @(
-    ".\data",
-    ".\src"
+    ".\data"
 )
 
 # Fichiers spécifiques à inclure
 $files = @(
-    ".\platformio.ini"
+    ".\platformio.ini",
+    ".\src\config_manager.cpp",
+    ".\src\config_manager.h",
+    ".\src\web_server.cpp",
+    ".\src\web_server.h",
+    ".\src\config.h",
+    ".\src\power.cpp",
+    ".\src\power.h"    
 )
 
 # Extensions à inclure

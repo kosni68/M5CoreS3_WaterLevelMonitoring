@@ -97,5 +97,13 @@ document.getElementById('btnReload').addEventListener('click', () => {
   fetchConfig();
 });
 
+function sendConfigPing() {
+  fetch('/ping', {
+    method: 'POST',
+    body: new URLSearchParams({page: 'config'})
+  });
+}
+setInterval(sendConfigPing, 10000);
+
 // initial load
 fetchConfig();
