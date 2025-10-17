@@ -13,6 +13,7 @@
 #define APP_VERSION_LEN 16
 
 struct AppConfig {
+
     bool mqtt_enabled;
     char mqtt_host[MQTT_HOST_LEN];
     uint16_t mqtt_port;
@@ -28,6 +29,7 @@ struct AppConfig {
 
     char device_name[DEVICE_NAME_LEN];
     uint32_t interactive_timeout_ms;
+    uint64_t deepsleep_interval_s;
 
     char admin_user[ADMIN_USER_LEN];
     char admin_pass[ADMIN_PASS_LEN];

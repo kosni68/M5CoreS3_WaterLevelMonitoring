@@ -24,6 +24,7 @@ async function fetchConfig() {
 
     document.getElementById('device_name').value = json.device_name || '';
     document.getElementById('interactive_timeout_ms').value = json.interactive_timeout_ms || 60000;
+    document.getElementById('deepsleep_interval_s').value = json.deepsleep_interval_s || 30;
 
     document.getElementById('admin_user').value = json.admin_user || '';
     // admin_pass left empty (masked)
@@ -51,6 +52,7 @@ function gatherConfig() {
 
   obj.device_name = document.getElementById('device_name').value || '';
   obj.interactive_timeout_ms = parseInt(document.getElementById('interactive_timeout_ms').value) || 60000;
+  obj.deepsleep_interval_s = parseInt(document.getElementById('deepsleep_interval_s').value) || 30;
 
   obj.admin_user = document.getElementById('admin_user').value || '';
   const ap = document.getElementById('admin_pass').value;

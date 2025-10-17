@@ -26,6 +26,10 @@ bool ConfigManager::begin() {
 
 void ConfigManager::applyDefaultsIfNeeded() {
     std::lock_guard<std::mutex> lk(mutex_);
+
+    if (config_.interactive_timeout_ms == 0)config_.interactive_timeout_ms = 600000; // 10 min
+    if (config_.deepsleep_interval_s == 0)config_.deepsleep_interval_s = 30;
+
     if (config_.measure_interval_ms < 50) config_.measure_interval_ms = 1000;
     if (config_.display_brightness > 255) config_.display_brightness = 128;
     if (config_.mqtt_port == 0) config_.mqtt_port = 1883;
@@ -54,6 +58,7 @@ bool ConfigManager::loadFromPreferences() {
 
     prefs.getString("device_name", config_.device_name, sizeof(config_.device_name));
     config_.interactive_timeout_ms = prefs.getUInt("interactive_timeout_ms", 60000);
+    config_.deepsleep_interval_s = prefs.getUInt("deepsleep_interval_s", 30);
 
     prefs.getString("admin_user", config_.admin_user, sizeof(config_.admin_user));
     prefs.getString("admin_pass", config_.admin_pass, sizeof(config_.admin_pass));
@@ -83,6 +88,7 @@ bool ConfigManager::save() {
 
     prefs.putString("device_name", config_.device_name);
     prefs.putUInt("interactive_timeout_ms", config_.interactive_timeout_ms);
+    prefs.putUInt("deepsleep_interval_s", config_.deepsleep_interval_s);
 
     prefs.putString("admin_user", config_.admin_user);
     prefs.putString("admin_pass", config_.admin_pass);
@@ -110,6 +116,7 @@ String ConfigManager::toJsonString() {
 
     doc["device_name"] = config_.device_name;
     doc["interactive_timeout_ms"] = config_.interactive_timeout_ms;
+    doc["deepsleep_interval_s"] = config_.deepsleep_interval_s;
 
     doc["admin_user"] = config_.admin_user;
     doc["admin_pass"] = "*****";
@@ -141,6 +148,7 @@ bool ConfigManager::updateFromJson(const String &json) {
 
     if (doc["device_name"].is<const char*>()) strlcpy(config_.device_name, doc["device_name"], sizeof(config_.device_name));
     if (doc["interactive_timeout_ms"].is<uint32_t>()) config_.interactive_timeout_ms = doc["interactive_timeout_ms"];
+    if (doc["deepsleep_interval_s"].is<uint32_t>()) config_.deepsleep_interval_s = doc["deepsleep_interval_s"];
 
     if (doc["admin_user"].is<const char*>()) strlcpy(config_.admin_user, doc["admin_user"], sizeof(config_.admin_user));
     if (doc["admin_pass"].is<const char*>()) strlcpy(config_.admin_pass, doc["admin_pass"], sizeof(config_.admin_pass));
