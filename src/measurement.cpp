@@ -2,6 +2,7 @@
 #include <Preferences.h>
 #include "measurement.h"
 #include "config.h"
+#include "config_manager.h"
 
 // ---------- Globals ----------
 RTC_DATA_ATTR bool wokeFromTimer = false;
@@ -27,6 +28,11 @@ void sensorTask(void *pv) {
   float avg = 0.0f;
   for (;;) {
     float m = measureDistanceCmOnce();
+
+    // Apply configurable offset (dynamic)
+    float offset = ConfigManager::instance().getMeasureOffsetCm();
+    if (m > 0) m += offset;
+
     avg = runningAverage(m, avg, 0.25f);
     float est = NAN;
     if (avg > 0.0f) est = estimateHeightFromMeasured(avg);
@@ -34,7 +40,12 @@ void sensorTask(void *pv) {
       std::lock_guard<std::mutex> lock(distMutex);
       lastMeasuredCm = avg; lastEstimatedHeight = est;
     }
-    vTaskDelay(pdMS_TO_TICKS(SENSOR_PERIOD_MS));
+
+    // Dynamic period from ConfigManager (allows live tuning)
+    uint32_t periodMs = ConfigManager::instance().getMeasureIntervalMs();
+    if (periodMs < 50) periodMs = 50; // safety lower bound
+
+    vTaskDelay(pdMS_TO_TICKS(periodMs));
   }
 }
 

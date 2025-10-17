@@ -4,20 +4,21 @@
 #include "mqtt.h"
 #include "config.h"
 #include "utils.h"
+#include "config_manager.h"
 
 #include <LittleFS.h>
 #include <Arduino.h>
 #include <WiFi.h>
-#include <LittleFS.h>
-#include <ESPAsyncWebServer.h>
 #include <mutex>
+#include <M5Unified.h>
+
 
 // Serveur HTTP sur le port 80
 AsyncWebServer server(80);
 extern std::mutex mqttMutex;
 extern volatile bool mqttBusy;
 
-// --- Déclarations des handlers ---
+// --- Déclarations des handlers existants ---
 void handleDistanceApi(AsyncWebServerRequest *request);
 void handleCalibsApi(AsyncWebServerRequest *request);
 void handleSaveCalib(AsyncWebServerRequest *request);
@@ -25,13 +26,24 @@ void handleClearCalib(AsyncWebServerRequest *request);
 void handleSetCuve(AsyncWebServerRequest *request);
 void handleSendMQTT(AsyncWebServerRequest *request);
 
+// --- NEW: API config ---
+void handleGetConfig(AsyncWebServerRequest *request);
+void handlePostConfig(AsyncWebServerRequest *request);
+
 // --- Initialisation du serveur ---
-void startWebServer() {  
+void startWebServer() {
     Serial.println("[WEB] Initialisation du serveur...");
-    
+
     if (!LittleFS.begin(true)) {
         DEBUG_PRINT("LittleFS mount failed!");
         while (true) delay(1000);
+    }
+
+    // Initialize config manager
+    if (!ConfigManager::instance().begin()) {
+        DEBUG_PRINT("[WEB] ConfigManager failed to initialize or config missing - defaults used.");
+        // try to save defaults
+        ConfigManager::instance().save();
     }
 
     // Tentative de connexion WiFi rapide
@@ -61,7 +73,32 @@ void startWebServer() {
         request->send(response);
     });
 
-    // --- Routes API ---
+    // Serve the config page (single page of configuration)
+    server.on("/config.html", HTTP_GET, [](AsyncWebServerRequest *request){
+        // Basic Auth
+        const char* adminUser = ConfigManager::instance().getAdminUser();
+        const char* adminPass = ConfigManager::instance().getAdminPass();
+        if (!request->authenticate(adminUser, adminPass)) {
+            return request->requestAuthentication();
+        }
+        AsyncWebServerResponse *response = request->beginResponse(LittleFS, "/config.html", "text/html");
+        response->addHeader("Content-Type", "text/html; charset=utf-8");
+        request->send(response);
+    });
+
+    // Serve config JS
+    server.on("/script_config.js", HTTP_GET, [](AsyncWebServerRequest *request){
+        const char* adminUser = ConfigManager::instance().getAdminUser();
+        const char* adminPass = ConfigManager::instance().getAdminPass();
+        if (!request->authenticate(adminUser, adminPass)) {
+            return request->requestAuthentication();
+        }
+        AsyncWebServerResponse *response = request->beginResponse(LittleFS, "/script_config.js", "application/javascript");
+        response->addHeader("Content-Type", "application/javascript; charset=utf-8");
+        request->send(response);
+    });
+
+    // --- Routes API existantes ---
     server.on("/distance", HTTP_GET, [](AsyncWebServerRequest *request){ handleDistanceApi(request); });
     server.on("/calibs", HTTP_GET, [](AsyncWebServerRequest *request){ handleCalibsApi(request); });
     server.on("/save_calib", HTTP_POST, [](AsyncWebServerRequest *request){ handleSaveCalib(request); });
@@ -69,6 +106,15 @@ void startWebServer() {
     server.on("/setCuve", HTTP_POST, [](AsyncWebServerRequest *request){ handleSetCuve(request); });
     server.on("/send_mqtt", HTTP_POST, [](AsyncWebServerRequest *request){ handleSendMQTT(request); });
 
+    // --- NEW: Config API (protected) ---
+    server.on("/api/config", HTTP_GET, [](AsyncWebServerRequest *request){
+        handleGetConfig(request);
+    });
+
+    // POST to update config (expects Content-Type: application/json)
+    server.on("/api/config", HTTP_POST, [](AsyncWebServerRequest *request){
+        handlePostConfig(request);
+    });
 
     // --- Démarrage du serveur ---
     server.begin();
@@ -99,21 +145,21 @@ String makeJsonCalibs() {
   return s;
 }
 
-// --- Handlers des routes API ---
+// --- Handlers des routes API existantes ---
 
 void handleDistanceApi(AsyncWebServerRequest *request) {
     String json = makeJsonDistance();
-    request->send(200, "application/json", json);
+    request->send(200, "application/json; charset=utf-8", json);
 }
 
 void handleCalibsApi(AsyncWebServerRequest *request) {
     String json = makeJsonCalibs();
-    request->send(200, "application/json", json);
+    request->send(200, "application/json; charset=utf-8", json);
 }
 
 void handleSaveCalib(AsyncWebServerRequest *request) {
     if (!request->hasParam("id", true) || !request->hasParam("height", true)) {
-        request->send(400, "application/json", "{\"ok\":false}");
+        request->send(400, "application/json; charset=utf-8", "{\"ok\":false}");
         return;
     }
 
@@ -127,20 +173,20 @@ void handleSaveCalib(AsyncWebServerRequest *request) {
     }
 
     if (measured <= 0.0f) {
-        request->send(200, "application/json", "{\"ok\":false,\"err\":\"no echo\"}");
+        request->send(200, "application/json; charset=utf-8", "{\"ok\":false,\"err\":\"no echo\"}");
         return;
     }
 
     saveCalibrationToNVS(id, measured, height);
     computePolynomialFrom3Points();
 
-    request->send(200, "application/json", "{\"ok\":true}");
+    request->send(200, "application/json; charset=utf-8", "{\"ok\":true}");
 }
 
 void handleClearCalib(AsyncWebServerRequest *request) {
     clearCalibrations();
     computePolynomialFrom3Points();
-    request->send(200, "application/json", "{\"ok\":true}");
+    request->send(200, "application/json; charset=utf-8", "{\"ok\":true}");
 }
 
 void handleSetCuve(AsyncWebServerRequest *request) {
@@ -152,14 +198,14 @@ void handleSetCuve(AsyncWebServerRequest *request) {
     }
 
     saveCuveLevels();
-    request->send(200, "application/json", "{\"ok\":true}");
+    request->send(200, "application/json; charset=utf-8", "{\"ok\":true}");
 }
 
 void handleSendMQTT(AsyncWebServerRequest *request) {
     {
         std::lock_guard<std::mutex> lock(mqttMutex);
         if (mqttBusy) {
-            request->send(200, "application/json", "{\"ok\":false,\"err\":\"mqtt_busy\"}");
+            request->send(200, "application/json; charset=utf-8", "{\"ok\":false,\"err\":\"mqtt_busy\"}");
             return;
         }
         mqttBusy = true;
@@ -173,5 +219,73 @@ void handleSendMQTT(AsyncWebServerRequest *request) {
     }
 
     String resp = String("{\"ok\":") + (ok ? "true" : "false") + "}";
-    request->send(200, "application/json", resp);
+    request->send(200, "application/json; charset=utf-8", resp);
+}
+
+// --- NEW: Config handlers ---
+
+void handleGetConfig(AsyncWebServerRequest *request) {
+    // Protect with Basic Auth
+    const char* adminUser = ConfigManager::instance().getAdminUser();
+    const char* adminPass = ConfigManager::instance().getAdminPass();
+    if (!request->authenticate(adminUser, adminPass)) {
+        return request->requestAuthentication();
+    }
+
+    String json = ConfigManager::instance().toJsonString();
+    request->send(200, "application/json; charset=utf-8", json);
+}
+
+void handlePostConfig(AsyncWebServerRequest *request) {
+    const char* adminUser = ConfigManager::instance().getAdminUser();
+    const char* adminPass = ConfigManager::instance().getAdminPass();
+    if (!request->authenticate(adminUser, adminPass)) {
+        return request->requestAuthentication();
+    }
+
+    // Read body (JSON)
+    if (request->contentType() != "application/json") {
+        // Accept anyway but prefer application/json
+    }
+
+    // AsyncWebServer provides onBody only in upload handlers; for simple POST with body,
+    // the body is already available via request->arg("plain") depending on client.
+    String body;
+    if (request->hasParam("plain", true)) {
+        body = request->getParam("plain", true)->value();
+    } else {
+        // try to read URL encoded or args
+        body = request->arg("plain");
+    }
+
+    if (body.length() == 0) {
+        // Possibly the client sent form data; assemble JSON from params (fallback)
+        JsonDocument doc;
+        for (uint8_t i = 0; i < request->params(); i++) {
+            const AsyncWebParameter* p = request->getParam(i);
+            if (!p->isFile()) {
+                doc[p->name()] = p->value();
+            }
+        }
+        String tmp; serializeJson(doc, tmp); body = tmp;
+    }
+
+    bool okUpdate = false;
+    if (body.length() > 0) {
+        okUpdate = ConfigManager::instance().updateFromJson(body);
+        if (okUpdate) {
+            ConfigManager::instance().save();
+
+            // apply dynamic effects if needed immediately
+            // e.g. adjust display brightness
+            uint8_t b = ConfigManager::instance().getDisplayBrightness();
+            {
+                std::lock_guard<std::mutex> lk(displayMutex);
+                M5.Display.setBrightness(b);
+            }
+        }
+    }
+
+    if (okUpdate) request->send(200, "application/json; charset=utf-8", "{\"ok\":true}");
+    else request->send(400, "application/json; charset=utf-8", "{\"ok\":false}");
 }
