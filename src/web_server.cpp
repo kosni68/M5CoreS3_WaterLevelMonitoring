@@ -32,113 +32,140 @@ void handlePostConfig(AsyncWebServerRequest *request);
 // --- Initialisation du serveur ---
 void startWebServer()
 {
-    Serial.println("[WEB] Initialisation du serveur...");
+    Serial.println("[WEB] Initialisation du serveur HTTP...");
 
     if (!LittleFS.begin(true))
     {
-        DEBUG_PRINT("LittleFS mount failed!");
+        Serial.println("[WEB][ERREUR] Échec du montage LittleFS !");
         while (true)
             delay(1000);
     }
 
-    // Initialize config manager
+    // Initialisation du gestionnaire de configuration
     if (!ConfigManager::instance().begin())
     {
-        DEBUG_PRINT("[WEB] ConfigManager failed to initialize or config missing - defaults used.");
-        // try to save defaults
+        Serial.println("[WEB][WARN] ConfigManager n’a pas pu charger la configuration, utilisation des valeurs par défaut.");
         ConfigManager::instance().save();
     }
 
-    // Tentative de connexion WiFi rapide
+    // Tentative de connexion Wi-Fi
     if (!connectWiFiShort(8000))
     {
-        Serial.println("[WEB] Échec WiFi, passage en mode point d'accès...");
+        Serial.println("[WEB][WARN] Échec de connexion Wi-Fi. Activation du mode point d’accès...");
         WiFi.mode(WIFI_AP);
         WiFi.softAP("M5CoreS3_Puits");
+        Serial.print("[WEB] Point d’accès actif : ");
+        Serial.println(WiFi.softAPIP());
     }
     else
     {
-        Serial.print("[WEB] Connecté au WiFi : ");
+        Serial.print("[WEB] Connecté au Wi-Fi : ");
         Serial.println(WiFi.localIP());
     }
 
-    // --- Fichiers statiques ---
+    // --- Routes statiques ---
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
               {
+        Serial.println("[WEB] GET /index.html");
         AsyncWebServerResponse *response = request->beginResponse(LittleFS, "/index.html", "text/html");
         response->addHeader("Content-Type", "text/html; charset=utf-8");
         request->send(response); });
+
     server.on("/style.css", HTTP_GET, [](AsyncWebServerRequest *request)
               {
+        Serial.println("[WEB] GET /style.css");
         AsyncWebServerResponse *response = request->beginResponse(LittleFS, "/style.css", "text/css");
         response->addHeader("Content-Type", "text/css; charset=utf-8");
         request->send(response); });
+
     server.on("/script.js", HTTP_GET, [](AsyncWebServerRequest *request)
               {
+        Serial.println("[WEB] GET /script.js");
         AsyncWebServerResponse *response = request->beginResponse(LittleFS, "/script.js", "application/javascript");
         response->addHeader("Content-Type", "application/javascript; charset=utf-8");
         request->send(response); });
 
-    // Serve the config page (single page of configuration)
+    // --- Page de configuration protégée ---
     server.on("/config.html", HTTP_GET, [](AsyncWebServerRequest *request)
               {
-        // Basic Auth
-        const char* adminUser = ConfigManager::instance().getAdminUser();
-        const char* adminPass = ConfigManager::instance().getAdminPass();
+        const char *adminUser = ConfigManager::instance().getAdminUser();
+        const char *adminPass = ConfigManager::instance().getAdminPass();
         if (!request->authenticate(adminUser, adminPass)) {
+            Serial.println("[WEB][AUTH] Authentification requise sur /config.html");
             return request->requestAuthentication();
         }
+        Serial.println("[WEB] GET /config.html (auth OK)");
         AsyncWebServerResponse *response = request->beginResponse(LittleFS, "/config.html", "text/html");
         response->addHeader("Content-Type", "text/html; charset=utf-8");
         request->send(response); });
 
-    // Serve config JS
+    // Script JS de la page de config
     server.on("/script_config.js", HTTP_GET, [](AsyncWebServerRequest *request)
               {
-        const char* adminUser = ConfigManager::instance().getAdminUser();
-        const char* adminPass = ConfigManager::instance().getAdminPass();
+        const char *adminUser = ConfigManager::instance().getAdminUser();
+        const char *adminPass = ConfigManager::instance().getAdminPass();
         if (!request->authenticate(adminUser, adminPass)) {
+            Serial.println("[WEB][AUTH] Authentification requise sur /script_config.js");
             return request->requestAuthentication();
         }
+        Serial.println("[WEB] GET /script_config.js (auth OK)");
         AsyncWebServerResponse *response = request->beginResponse(LittleFS, "/script_config.js", "application/javascript");
         response->addHeader("Content-Type", "application/javascript; charset=utf-8");
         request->send(response); });
 
+    // --- PING keepalive ---
     server.on("/ping", HTTP_POST, [](AsyncWebServerRequest *request)
               {
-    String page = request->arg("page");
-    if(page == "dashboard" ){        
+        String page = request->arg("page");
         interactiveLastTouchMs = millis();
-    } else if(page == "config"){
-        interactiveLastTouchMs = millis();
-    }
+        Serial.printf("[WEB] POST /ping (%s)\n", page.c_str());
         request->send(200, "application/json; charset=utf-8", "{\"ok\":true}"); });
 
-    // --- Routes API existantes ---
+    // --- API existantes ---
     server.on("/distance", HTTP_GET, [](AsyncWebServerRequest *request)
-              { handleDistanceApi(request); });
+              {
+        Serial.println("[WEB] GET /distance");
+        handleDistanceApi(request); });
+
     server.on("/calibs", HTTP_GET, [](AsyncWebServerRequest *request)
-              { handleCalibsApi(request); });
+              {
+        Serial.println("[WEB] GET /calibs");
+        handleCalibsApi(request); });
+
     server.on("/save_calib", HTTP_POST, [](AsyncWebServerRequest *request)
-              { handleSaveCalib(request); });
+              {
+        Serial.println("[WEB] POST /save_calib");
+        handleSaveCalib(request); });
+
     server.on("/clear_calib", HTTP_POST, [](AsyncWebServerRequest *request)
-              { handleClearCalib(request); });
+              {
+        Serial.println("[WEB] POST /clear_calib");
+        handleClearCalib(request); });
+
     server.on("/setCuve", HTTP_POST, [](AsyncWebServerRequest *request)
-              { handleSetCuve(request); });
+              {
+        Serial.println("[WEB] POST /setCuve");
+        handleSetCuve(request); });
+
     server.on("/send_mqtt", HTTP_POST, [](AsyncWebServerRequest *request)
-              { handleSendMQTT(request); });
+              {
+        Serial.println("[WEB] POST /send_mqtt");
+        handleSendMQTT(request); });
 
     // --- NEW: Config API (protected) ---
     server.on("/api/config", HTTP_GET, [](AsyncWebServerRequest *request)
-              { handleGetConfig(request); });
+              {
+        Serial.println("[WEB] GET /api/config");
+        handleGetConfig(request); });
 
-    // POST to update config (expects Content-Type: application/json)
     server.on("/api/config", HTTP_POST, [](AsyncWebServerRequest *request)
-              { handlePostConfig(request); });
+              {
+        Serial.println("[WEB] POST /api/config");
+        handlePostConfig(request); });
 
-    // --- Démarrage du serveur ---
+    // --- Lancement du serveur ---
     server.begin();
-    Serial.println("[WEB] Serveur Web démarré !");
+    Serial.println("[WEB] Serveur Web démarré et prêt !");
 }
 
 String makeJsonDistance()
@@ -151,6 +178,7 @@ String makeJsonDistance()
         h = lastEstimatedHeight;
         dur = lastDurationUs;
     }
+
     char buf[256];
     if (m < 0)
         snprintf(buf, sizeof(buf), "{\"measured_cm\":null,\"estimated_cm\":null,\"duration_us\":%lu,\"cuveVide\":%.1f,\"cuvePleine\":%.1f}", dur, cuveVide, cuvePleine);
@@ -166,7 +194,7 @@ String makeJsonCalibs()
     {
         char tmp[96];
         snprintf(tmp, sizeof(tmp), "{\"index\":%d,\"measured\":%.2f,\"height\":%.2f}", i, calib_m[i], calib_h[i]);
-        s += String(tmp);
+        s += tmp;
         if (i < 2)
             s += ",";
     }
@@ -174,7 +202,7 @@ String makeJsonCalibs()
     return s;
 }
 
-// --- Handlers des routes API existantes ---
+// --- Handlers API existants ---
 
 void handleDistanceApi(AsyncWebServerRequest *request)
 {
@@ -192,6 +220,7 @@ void handleSaveCalib(AsyncWebServerRequest *request)
 {
     if (!request->hasParam("id", true) || !request->hasParam("height", true))
     {
+        Serial.println("[WEB][ERR] save_calib: paramètres manquants !");
         request->send(400, "application/json; charset=utf-8", "{\"ok\":false}");
         return;
     }
@@ -207,18 +236,20 @@ void handleSaveCalib(AsyncWebServerRequest *request)
 
     if (measured <= 0.0f)
     {
+        Serial.println("[WEB][WARN] save_calib: mesure invalide (no echo)");
         request->send(200, "application/json; charset=utf-8", "{\"ok\":false,\"err\":\"no echo\"}");
         return;
     }
 
+    Serial.printf("[WEB] Sauvegarde calibration #%d -> mesuré=%.2f, hauteur=%.2f\n", id, measured, height);
     saveCalibrationToNVS(id, measured, height);
     computePolynomialFrom3Points();
-
     request->send(200, "application/json; charset=utf-8", "{\"ok\":true}");
 }
 
 void handleClearCalib(AsyncWebServerRequest *request)
 {
+    Serial.println("[WEB] Effacement des calibrations...");
     clearCalibrations();
     computePolynomialFrom3Points();
     request->send(200, "application/json; charset=utf-8", "{\"ok\":true}");
@@ -226,15 +257,13 @@ void handleClearCalib(AsyncWebServerRequest *request)
 
 void handleSetCuve(AsyncWebServerRequest *request)
 {
+    Serial.println("[WEB] Mise à jour des niveaux de cuve...");
     if (request->hasParam("vide", true))
-    {
         cuveVide = request->getParam("vide", true)->value().toFloat();
-    }
     if (request->hasParam("pleine", true))
-    {
         cuvePleine = request->getParam("pleine", true)->value().toFloat();
-    }
 
+    Serial.printf("  -> Vide=%.2f, Pleine=%.2f\n", cuveVide, cuvePleine);
     saveCuveLevels();
     request->send(200, "application/json; charset=utf-8", "{\"ok\":true}");
 }
@@ -245,12 +274,14 @@ void handleSendMQTT(AsyncWebServerRequest *request)
         std::lock_guard<std::mutex> lock(mqttMutex);
         if (mqttBusy)
         {
+            Serial.println("[WEB][WARN] MQTT déjà en cours d’envoi !");
             request->send(200, "application/json; charset=utf-8", "{\"ok\":false,\"err\":\"mqtt_busy\"}");
             return;
         }
         mqttBusy = true;
     }
 
+    Serial.println("[WEB] Envoi MQTT manuel...");
     bool ok = publishMQTT_measure();
 
     {
@@ -258,6 +289,7 @@ void handleSendMQTT(AsyncWebServerRequest *request)
         mqttBusy = false;
     }
 
+    Serial.printf("[WEB] MQTT %s\n", ok ? "OK" : "ÉCHEC");
     String resp = String("{\"ok\":") + (ok ? "true" : "false") + "}";
     request->send(200, "application/json; charset=utf-8", resp);
 }
@@ -266,21 +298,23 @@ void handleSendMQTT(AsyncWebServerRequest *request)
 
 void handleGetConfig(AsyncWebServerRequest *request)
 {
-    // Protect with Basic Auth
     const char *adminUser = ConfigManager::instance().getAdminUser();
     const char *adminPass = ConfigManager::instance().getAdminPass();
     if (!request->authenticate(adminUser, adminPass))
     {
+        Serial.println("[WEB][AUTH] /api/config GET non autorisé");
         return request->requestAuthentication();
     }
 
+    Serial.println("[WEB] GET /api/config (auth OK)");
     String json = ConfigManager::instance().toJsonString();
     request->send(200, "application/json; charset=utf-8", json);
 }
 
 void handlePostConfig(AsyncWebServerRequest *request)
 {
-    // Authentification comme avant …
+    Serial.println("[WEB] POST /api/config reçu");
+
     String body = request->hasParam("plain", true)
                       ? request->getParam("plain", true)->value()
                       : request->arg("plain");
@@ -288,20 +322,31 @@ void handlePostConfig(AsyncWebServerRequest *request)
     bool okUpdate = false;
     if (body.length() > 0)
     {
+        Serial.println("[WEB] Corps JSON détecté, mise à jour de la configuration...");
         okUpdate = ConfigManager::instance().updateFromJson(body);
         if (okUpdate)
         {
-            // Répondre tout de suite
+            Serial.println("[WEB] Configuration mise à jour avec succès, réponse immédiate envoyée.");
             request->send(200, "application/json; charset=utf-8", "{\"ok\":true}");
 
-            // Sauvegarde et effets dans une tâche séparée
+            // Sauvegarde et tâches différées
             xTaskCreate([](void *)
                         {
                 ConfigManager::instance().save();
                 vTaskDelay(pdMS_TO_TICKS(100));
+                Serial.println("[WEB][Task] Sauvegarde config terminée (thread séparé)");
                 vTaskDelete(NULL); }, "saveConfig", 4096, NULL, 1, NULL);
             return;
         }
+        else
+        {
+            Serial.println("[WEB][ERR] Échec mise à jour config JSON");
+        }
     }
+    else
+    {
+        Serial.println("[WEB][ERR] Aucun corps JSON reçu !");
+    }
+
     request->send(400, "application/json; charset=utf-8", "{\"ok\":false}");
 }

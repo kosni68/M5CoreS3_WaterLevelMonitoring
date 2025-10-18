@@ -10,51 +10,85 @@ ConfigManager &ConfigManager::instance()
 
 bool ConfigManager::begin()
 {
+    Serial.println("[ConfigManager] Initialisation...");
+
     Preferences prefs;
     if (!prefs.begin("config", true))
+    {
+        Serial.println("[ConfigManager] Erreur: impossible d’ouvrir les preferences en lecture.");
         return false;
+    }
 
     bool exists = prefs.isKey("mqtt_host") || prefs.isKey("device_name");
     prefs.end();
 
     if (!exists)
     {
+        Serial.println("[ConfigManager] Aucune configuration trouvée. Application des valeurs par défaut...");
         applyDefaultsIfNeeded();
         save();
         return true;
     }
+
     bool ok = loadFromPreferences();
     applyDefaultsIfNeeded();
+    Serial.printf("[ConfigManager] Chargement %s\n", ok ? "réussi" : "échoué");
     return ok;
 }
 
 void ConfigManager::applyDefaultsIfNeeded()
 {
     std::lock_guard<std::mutex> lk(mutex_);
+    Serial.println("[ConfigManager] Vérification des valeurs par défaut...");
 
     if (config_.interactive_timeout_ms == 0)
-        config_.interactive_timeout_ms = 600000; // 10 min
+    {
+        config_.interactive_timeout_ms = 600000;
+        Serial.println("  -> interactive_timeout_ms défini à 600000");
+    }
     if (config_.deepsleep_interval_s == 0)
+    {
         config_.deepsleep_interval_s = 30;
-
+        Serial.println("  -> deepsleep_interval_s défini à 30");
+    }
     if (config_.measure_interval_ms < 50)
+    {
         config_.measure_interval_ms = 1000;
+        Serial.println("  -> measure_interval_ms défini à 1000");
+    }
     if (config_.mqtt_port == 0)
+    {
         config_.mqtt_port = 1883;
+        Serial.println("  -> mqtt_port défini à 1883");
+    }
     if (strlen(config_.mqtt_host) == 0)
+    {
         strcpy(config_.mqtt_host, "broker.local");
+        Serial.println("  -> mqtt_host défini à broker.local");
+    }
     if (strlen(config_.device_name) == 0)
+    {
         strcpy(config_.device_name, "ESP32-Device");
+        Serial.println("  -> device_name défini à ESP32-Device");
+    }
     if (strlen(config_.app_version) == 0)
+    {
         strcpy(config_.app_version, "1.0.0");
+        Serial.println("  -> app_version défini à 1.0.0");
+    }
 }
 
 bool ConfigManager::loadFromPreferences()
 {
     std::lock_guard<std::mutex> lk(mutex_);
+    Serial.println("[ConfigManager] Chargement depuis Preferences...");
+
     Preferences prefs;
     if (!prefs.begin("config", true))
+    {
+        Serial.println("  -> Erreur: impossible d’ouvrir les preferences en lecture.");
         return false;
+    }
 
     config_.mqtt_enabled = prefs.getBool("mqtt_enabled", false);
     prefs.getString("mqtt_host", config_.mqtt_host, sizeof(config_.mqtt_host));
@@ -75,15 +109,29 @@ bool ConfigManager::loadFromPreferences()
     prefs.getString("app_version", config_.app_version, sizeof(config_.app_version));
 
     prefs.end();
+
+    Serial.printf("  -> MQTT %s @ %s:%d (user=%s)\n",
+                  config_.mqtt_enabled ? "activé" : "désactivé",
+                  config_.mqtt_host, config_.mqtt_port, config_.mqtt_user);
+    Serial.printf("  -> Device: %s, Intervalle mesure: %lu ms, Offset: %.2f cm\n",
+                  config_.device_name, config_.measure_interval_ms, config_.measure_offset_cm);
+    Serial.printf("  -> DeepSleep: %lu s, Timeout interactif: %lu ms\n",
+                  (unsigned long)config_.deepsleep_interval_s,
+                  (unsigned long)config_.interactive_timeout_ms);
     return true;
 }
 
 bool ConfigManager::save()
 {
     std::lock_guard<std::mutex> lk(mutex_);
+    Serial.println("[ConfigManager] Sauvegarde dans Preferences...");
+
     Preferences prefs;
     if (!prefs.begin("config", false))
+    {
+        Serial.println("  -> Erreur: impossible d’ouvrir les preferences en écriture.");
         return false;
+    }
 
     prefs.putBool("mqtt_enabled", config_.mqtt_enabled);
     prefs.putString("mqtt_host", config_.mqtt_host);
@@ -104,6 +152,7 @@ bool ConfigManager::save()
     prefs.putString("app_version", config_.app_version);
 
     prefs.end();
+    Serial.println("  -> Configuration sauvegardée avec succès !");
     return true;
 }
 
@@ -111,6 +160,7 @@ String ConfigManager::toJsonString()
 {
     std::lock_guard<std::mutex> lk(mutex_);
     JsonDocument doc;
+
     doc["mqtt_enabled"] = config_.mqtt_enabled;
     doc["mqtt_host"] = config_.mqtt_host;
     doc["mqtt_port"] = config_.mqtt_port;
@@ -131,17 +181,23 @@ String ConfigManager::toJsonString()
 
     String s;
     serializeJson(doc, s);
+    Serial.println("[ConfigManager] Conversion en JSON effectuée.");
     return s;
 }
 
 bool ConfigManager::updateFromJson(const String &json)
 {
+    Serial.println("[ConfigManager] Mise à jour depuis JSON...");
     JsonDocument doc;
     auto err = deserializeJson(doc, json);
     if (err)
+    {
+        Serial.printf("  -> Erreur parse JSON: %s\n", err.c_str());
         return false;
+    }
 
     std::lock_guard<std::mutex> lk(mutex_);
+
     if (doc["mqtt_enabled"].is<bool>())
         config_.mqtt_enabled = doc["mqtt_enabled"].as<bool>();
     if (doc["mqtt_host"].is<const char *>())
@@ -172,8 +228,12 @@ bool ConfigManager::updateFromJson(const String &json)
     if (doc["admin_pass"].is<const char *>())
         strlcpy(config_.admin_pass, doc["admin_pass"], sizeof(config_.admin_pass));
 
+    Serial.println("  -> Mise à jour de la configuration en mémoire OK.");
+
     applyDefaultsIfNeeded();
-    return save();
+    bool ok = save();
+    Serial.printf("  -> Sauvegarde après mise à jour: %s\n", ok ? "OK" : "ÉCHEC");
+    return ok;
 }
 
 AppConfig ConfigManager::getConfig()
