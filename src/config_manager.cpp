@@ -89,24 +89,23 @@ bool ConfigManager::loadFromPreferences()
         Serial.println("  -> Erreur: impossible d’ouvrir les preferences en lecture.");
         return false;
     }
-
-    config_.mqtt_enabled = prefs.getBool("mqtt_enabled", false);
+    config_.mqtt_enabled = prefs.getBool("mqtt_en", false);
     prefs.getString("mqtt_host", config_.mqtt_host, sizeof(config_.mqtt_host));
     config_.mqtt_port = prefs.getUShort("mqtt_port", 1883);
     prefs.getString("mqtt_user", config_.mqtt_user, sizeof(config_.mqtt_user));
     prefs.getString("mqtt_pass", config_.mqtt_pass, sizeof(config_.mqtt_pass));
     prefs.getString("mqtt_topic", config_.mqtt_topic, sizeof(config_.mqtt_topic));
 
-    config_.measure_interval_ms = prefs.getUInt("measure_interval_ms", 1000);
-    config_.measure_offset_cm = prefs.getFloat("measure_offset_cm", 0.0f);
+    config_.measure_interval_ms = prefs.getUInt("meas_int_ms", 1000);
+    config_.measure_offset_cm = prefs.getFloat("meas_off_cm", 0.0f);
 
-    prefs.getString("device_name", config_.device_name, sizeof(config_.device_name));
-    config_.interactive_timeout_ms = prefs.getUInt("interactive_timeout_ms", 60000);
-    config_.deepsleep_interval_s = prefs.getUInt("deepsleep_interval_s", 30);
+    prefs.getString("dev_name", config_.device_name, sizeof(config_.device_name));
+    config_.interactive_timeout_ms = prefs.getUInt("int_to_ms", 60000);
+    config_.deepsleep_interval_s = prefs.getUInt("deep_int_s", 30);
 
-    prefs.getString("admin_user", config_.admin_user, sizeof(config_.admin_user));
-    prefs.getString("admin_pass", config_.admin_pass, sizeof(config_.admin_pass));
-    prefs.getString("app_version", config_.app_version, sizeof(config_.app_version));
+    prefs.getString("adm_user", config_.admin_user, sizeof(config_.admin_user));
+    prefs.getString("adm_pass", config_.admin_pass, sizeof(config_.admin_pass));
+    prefs.getString("app_ver", config_.app_version, sizeof(config_.app_version));
 
     prefs.end();
 
@@ -124,39 +123,32 @@ bool ConfigManager::loadFromPreferences()
 bool ConfigManager::save()
 {
     std::lock_guard<std::mutex> lk(mutex_);
-    Serial.println("[ConfigManager] Sauvegarde dans Preferences...");
-
     Preferences prefs;
     if (!prefs.begin("config", false))
-    {
-        Serial.println("  -> Erreur: impossible d’ouvrir les preferences en écriture.");
         return false;
-    }
 
-    prefs.putBool("mqtt_enabled", config_.mqtt_enabled);
+    Serial.println("[ConfigManager] Sauvegarde dans Preferences...");
+
+    prefs.putBool("mqtt_en", config_.mqtt_enabled);
     prefs.putString("mqtt_host", config_.mqtt_host);
     prefs.putUShort("mqtt_port", config_.mqtt_port);
     prefs.putString("mqtt_user", config_.mqtt_user);
     prefs.putString("mqtt_pass", config_.mqtt_pass);
     prefs.putString("mqtt_topic", config_.mqtt_topic);
-    yield();
 
-    prefs.putUInt("measure_interval_ms", config_.measure_interval_ms);
-    prefs.putFloat("measure_offset_cm", config_.measure_offset_cm);
-    yield();
+    prefs.putUInt("meas_int_ms", config_.measure_interval_ms);
+    prefs.putFloat("meas_off_cm", config_.measure_offset_cm);
 
-    prefs.putString("device_name", config_.device_name);
-    prefs.putUInt("interactive_timeout_ms", config_.interactive_timeout_ms);
-    prefs.putUInt("deepsleep_interval_s", config_.deepsleep_interval_s);
-    yield();
+    prefs.putString("dev_name", config_.device_name);
+    prefs.putUInt("int_to_ms", config_.interactive_timeout_ms);
+    prefs.putUInt("deep_int_s", config_.deepsleep_interval_s);
 
-    prefs.putString("admin_user", config_.admin_user);
-    prefs.putString("admin_pass", config_.admin_pass);
-    prefs.putString("app_version", config_.app_version);
-    yield();
+    prefs.putString("adm_user", config_.admin_user);
+    prefs.putString("adm_pass", config_.admin_pass);
+    prefs.putString("app_ver", config_.app_version);
 
     prefs.end();
-    Serial.println("  -> Configuration sauvegardée avec succès !");
+    Serial.println(" Configuration sauvegardée avec succès !");
     return true;
 }
 
