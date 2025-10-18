@@ -10,13 +10,6 @@
 extern const char* WIFI_SSID;
 extern const char* WIFI_PASS;
 
-extern const bool ENABLE_MQTT;
-extern const char* MQTT_HOST;
-extern const char* MQTT_USER;
-extern const char* MQTT_PASS;
-extern const char* MQTT_TOPIC;
-extern const uint16_t MQTT_PORT;
-
 extern std::mutex distMutex;
 extern std::mutex mqttMutex; 
 extern std::mutex displayMutex;

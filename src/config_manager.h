@@ -12,7 +12,8 @@
 #define ADMIN_PASS_LEN 16
 #define APP_VERSION_LEN 16
 
-struct AppConfig {
+struct AppConfig
+{
 
     bool mqtt_enabled;
     char mqtt_host[MQTT_HOST_LEN];
@@ -29,7 +30,7 @@ struct AppConfig {
 
     char device_name[DEVICE_NAME_LEN];
     uint32_t interactive_timeout_ms;
-    uint64_t deepsleep_interval_s;
+    uint32_t deepsleep_interval_s;
 
     char admin_user[ADMIN_USER_LEN];
     char admin_pass[ADMIN_PASS_LEN];
@@ -37,9 +38,10 @@ struct AppConfig {
     char app_version[APP_VERSION_LEN];
 };
 
-class ConfigManager {
+class ConfigManager
+{
 public:
-    static ConfigManager& instance();
+    static ConfigManager &instance();
     bool begin();
     bool save();
     String toJsonString();
@@ -50,14 +52,14 @@ public:
     float getMeasureOffsetCm();
     uint8_t getDisplayBrightness();
     bool isMQTTEnabled();
-    const char* getAdminUser();
-    const char* getAdminPass();
+    const char *getAdminUser();
+    const char *getAdminPass();
 
 private:
     ConfigManager() = default;
     ~ConfigManager() = default;
-    ConfigManager(const ConfigManager&) = delete;
-    ConfigManager& operator=(const ConfigManager&) = delete;
+    ConfigManager(const ConfigManager &) = delete;
+    ConfigManager &operator=(const ConfigManager &) = delete;
 
     void applyDefaultsIfNeeded();
     bool loadFromPreferences();
