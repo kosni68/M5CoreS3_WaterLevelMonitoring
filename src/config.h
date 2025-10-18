@@ -1,6 +1,7 @@
 #pragma once
 #include <Arduino.h>
 #include <mutex>
+#include <atomic>
 
 // ---------- DEBUG ----------
 #define DEBUG true
@@ -21,7 +22,7 @@ const int echoPin = 8;
 // ---------- Timing ----------
 const int SENSOR_PERIOD_MS = 200;
 const int DISPLAY_PERIOD_MS = 300;
-extern uint32_t interactiveLastTouchMs;
+extern std::atomic<uint32_t> interactiveLastTouchMs;
 
 extern float lastMeasuredCm;
 extern float lastEstimatedHeight;

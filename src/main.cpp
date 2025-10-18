@@ -48,7 +48,8 @@ void setup() {
 
 void loop() {
     if (interactiveMode) {
-        if ((uint32_t)(millis() - interactiveLastTouchMs) > ConfigManager::instance().getConfig().interactive_timeout_ms) {
+        if ((uint32_t)(millis() - interactiveLastTouchMs.load()) > ConfigManager::instance().getConfig().interactive_timeout_ms)
+        {
             disconnectWiFiClean();
             delay(50);
             goDeepSleep();

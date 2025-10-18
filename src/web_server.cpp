@@ -117,7 +117,7 @@ void handlePostConfig(AsyncWebServerRequest *request, const String &body);
     server.on("/ping", HTTP_POST, [](AsyncWebServerRequest *request)
               {
         String page = request->arg("page");
-        interactiveLastTouchMs = millis();
+        interactiveLastTouchMs.store(millis());
         Serial.printf("[WEB] POST /ping (%s)\n", page.c_str());
         request->send(200, "application/json; charset=utf-8", "{\"ok\":true}"); });
 
