@@ -139,17 +139,21 @@ bool ConfigManager::save()
     prefs.putString("mqtt_user", config_.mqtt_user);
     prefs.putString("mqtt_pass", config_.mqtt_pass);
     prefs.putString("mqtt_topic", config_.mqtt_topic);
+    yield();
 
     prefs.putUInt("measure_interval_ms", config_.measure_interval_ms);
     prefs.putFloat("measure_offset_cm", config_.measure_offset_cm);
+    yield();
 
     prefs.putString("device_name", config_.device_name);
     prefs.putUInt("interactive_timeout_ms", config_.interactive_timeout_ms);
     prefs.putUInt("deepsleep_interval_s", config_.deepsleep_interval_s);
+    yield();
 
     prefs.putString("admin_user", config_.admin_user);
     prefs.putString("admin_pass", config_.admin_pass);
     prefs.putString("app_version", config_.app_version);
+    yield();
 
     prefs.end();
     Serial.println("  -> Configuration sauvegardée avec succès !");
@@ -184,56 +188,66 @@ String ConfigManager::toJsonString()
     Serial.println("[ConfigManager] Conversion en JSON effectuée.");
     return s;
 }
-
 bool ConfigManager::updateFromJson(const String &json)
 {
     Serial.println("[ConfigManager] Mise à jour depuis JSON...");
+
     JsonDocument doc;
     auto err = deserializeJson(doc, json);
     if (err)
     {
-        Serial.printf("  -> Erreur parse JSON: %s\n", err.c_str());
+        Serial.println("[ConfigManager][ERR] JSON invalide !");
         return false;
     }
 
-    std::lock_guard<std::mutex> lk(mutex_);
+    {
+        // Limiter la portée du verrou au strict minimum
+        std::lock_guard<std::mutex> lk(mutex_);
 
-    if (doc["mqtt_enabled"].is<bool>())
-        config_.mqtt_enabled = doc["mqtt_enabled"].as<bool>();
-    if (doc["mqtt_host"].is<const char *>())
-        strlcpy(config_.mqtt_host, doc["mqtt_host"], sizeof(config_.mqtt_host));
-    if (doc["mqtt_port"].is<uint16_t>())
-        config_.mqtt_port = doc["mqtt_port"];
-    if (doc["mqtt_user"].is<const char *>())
-        strlcpy(config_.mqtt_user, doc["mqtt_user"], sizeof(config_.mqtt_user));
-    if (doc["mqtt_pass"].is<const char *>())
-        strlcpy(config_.mqtt_pass, doc["mqtt_pass"], sizeof(config_.mqtt_pass));
-    if (doc["mqtt_topic"].is<const char *>())
-        strlcpy(config_.mqtt_topic, doc["mqtt_topic"], sizeof(config_.mqtt_topic));
+        if (doc["mqtt_enabled"].is<bool>())
+            config_.mqtt_enabled = doc["mqtt_enabled"].as<bool>();
+        if (doc["mqtt_host"].is<const char *>())
+            strlcpy(config_.mqtt_host, doc["mqtt_host"], sizeof(config_.mqtt_host));
+        if (doc["mqtt_port"].is<uint16_t>())
+            config_.mqtt_port = doc["mqtt_port"];
+        if (doc["mqtt_user"].is<const char *>())
+            strlcpy(config_.mqtt_user, doc["mqtt_user"], sizeof(config_.mqtt_user));
+        if (doc["mqtt_pass"].is<const char *>())
+            strlcpy(config_.mqtt_pass, doc["mqtt_pass"], sizeof(config_.mqtt_pass));
+        if (doc["mqtt_topic"].is<const char *>())
+            strlcpy(config_.mqtt_topic, doc["mqtt_topic"], sizeof(config_.mqtt_topic));
 
-    if (doc["measure_interval_ms"].is<uint32_t>())
-        config_.measure_interval_ms = doc["measure_interval_ms"];
-    if (doc["measure_offset_cm"].is<float>())
-        config_.measure_offset_cm = doc["measure_offset_cm"];
+        if (doc["measure_interval_ms"].is<uint32_t>())
+            config_.measure_interval_ms = doc["measure_interval_ms"];
+        if (doc["measure_offset_cm"].is<float>())
+            config_.measure_offset_cm = doc["measure_offset_cm"];
 
-    if (doc["device_name"].is<const char *>())
-        strlcpy(config_.device_name, doc["device_name"], sizeof(config_.device_name));
-    if (doc["interactive_timeout_ms"].is<uint32_t>())
-        config_.interactive_timeout_ms = doc["interactive_timeout_ms"];
-    if (doc["deepsleep_interval_s"].is<uint32_t>())
-        config_.deepsleep_interval_s = doc["deepsleep_interval_s"];
+        if (doc["device_name"].is<const char *>())
+            strlcpy(config_.device_name, doc["device_name"], sizeof(config_.device_name));
+        if (doc["interactive_timeout_ms"].is<uint32_t>())
+            config_.interactive_timeout_ms = doc["interactive_timeout_ms"];
+        if (doc["deepsleep_interval_s"].is<uint32_t>())
+            config_.deepsleep_interval_s = doc["deepsleep_interval_s"];
 
-    if (doc["admin_user"].is<const char *>())
-        strlcpy(config_.admin_user, doc["admin_user"], sizeof(config_.admin_user));
-    if (doc["admin_pass"].is<const char *>())
-        strlcpy(config_.admin_pass, doc["admin_pass"], sizeof(config_.admin_pass));
+        if (doc["admin_user"].is<const char *>())
+            strlcpy(config_.admin_user, doc["admin_user"], sizeof(config_.admin_user));
+        if (doc["admin_pass"].is<const char *>())
+            strlcpy(config_.admin_pass, doc["admin_pass"], sizeof(config_.admin_pass));
+    } // 🔓 le lock est libéré ici
 
     Serial.println("  -> Mise à jour de la configuration en mémoire OK.");
 
     applyDefaultsIfNeeded();
-    bool ok = save();
-    Serial.printf("  -> Sauvegarde après mise à jour: %s\n", ok ? "OK" : "ÉCHEC");
-    return ok;
+
+    // Sauvegarde asynchrone après libération du lock
+    xTaskCreate([](void *)
+                {
+        Serial.println("[ConfigManager][Task] Sauvegarde asynchrone en cours...");
+        ConfigManager::instance().save();
+        Serial.println("[ConfigManager][Task] Sauvegarde terminée !");
+        vTaskDelete(NULL); }, "saveConfigAsync", 4096, NULL, 1, NULL);
+
+    return true;
 }
 
 AppConfig ConfigManager::getConfig()

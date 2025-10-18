@@ -27,10 +27,10 @@ void handleSendMQTT(AsyncWebServerRequest *request);
 
 // --- NEW: API config ---
 void handleGetConfig(AsyncWebServerRequest *request);
-void handlePostConfig(AsyncWebServerRequest *request);
+void handlePostConfig(AsyncWebServerRequest *request, const String &body);
 
-// --- Initialisation du serveur ---
-void startWebServer()
+    // --- Initialisation du serveur ---
+    void startWebServer()
 {
     Serial.println("[WEB] Initialisation du serveur HTTP...");
 
@@ -158,10 +158,24 @@ void startWebServer()
         Serial.println("[WEB] GET /api/config");
         handleGetConfig(request); });
 
+    // --- Handler POST /api/config avec gestion du corps JSON ---
     server.on("/api/config", HTTP_POST, [](AsyncWebServerRequest *request)
               {
-        Serial.println("[WEB] POST /api/config");
-        handlePostConfig(request); });
+                  // on ne traite rien ici, juste placeholder
+              },
+              NULL, [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total)
+              {
+               static String body;
+               if (index == 0) {
+                   body = "";
+                   Serial.printf("[WEB] Début réception body JSON (%u octets)\n", total);
+               }
+               body += String((char *)data).substring(0, len);
+               if (index + len == total) {
+                   Serial.printf("[WEB] Corps JSON complet reçu (%u octets)\n", total);
+                   handlePostConfig(request, body);
+                   body = "";
+               } });
 
     // --- Lancement du serveur ---
     server.begin();
@@ -311,42 +325,26 @@ void handleGetConfig(AsyncWebServerRequest *request)
     request->send(200, "application/json; charset=utf-8", json);
 }
 
-void handlePostConfig(AsyncWebServerRequest *request)
+void handlePostConfig(AsyncWebServerRequest *request, const String &body)
 {
     Serial.println("[WEB] POST /api/config reçu");
 
-    String body = request->hasParam("plain", true)
-                      ? request->getParam("plain", true)->value()
-                      : request->arg("plain");
-
-    bool okUpdate = false;
-    if (body.length() > 0)
+    if (body.isEmpty())
     {
-        Serial.println("[WEB] Corps JSON détecté, mise à jour de la configuration...");
-        okUpdate = ConfigManager::instance().updateFromJson(body);
-        if (okUpdate)
-        {
-            Serial.println("[WEB] Configuration mise à jour avec succès, réponse immédiate envoyée.");
-            request->send(200, "application/json; charset=utf-8", "{\"ok\":true}");
+        Serial.println("[WEB][ERR] Corps JSON vide !");
+        request->send(400, "application/json; charset=utf-8", "{\"ok\":false,\"err\":\"empty body\"}");
+        return;
+    }
 
-            // Sauvegarde et tâches différées
-            xTaskCreate([](void *)
-                        {
-                ConfigManager::instance().save();
-                vTaskDelay(pdMS_TO_TICKS(100));
-                Serial.println("[WEB][Task] Sauvegarde config terminée (thread séparé)");
-                vTaskDelete(NULL); }, "saveConfig", 4096, NULL, 1, NULL);
-            return;
-        }
-        else
-        {
-            Serial.println("[WEB][ERR] Échec mise à jour config JSON");
-        }
+    bool okUpdate = ConfigManager::instance().updateFromJson(body);
+    if (okUpdate)
+    {
+        Serial.println("[WEB] Configuration mise à jour (sauvegarde différée).");
+        request->send(200, "application/json; charset=utf-8", "{\"ok\":true}");
     }
     else
     {
-        Serial.println("[WEB][ERR] Aucun corps JSON reçu !");
+        Serial.println("[WEB][ERR] Échec de la mise à jour JSON !");
+        request->send(400, "application/json; charset=utf-8", "{\"ok\":false}");
     }
-
-    request->send(400, "application/json; charset=utf-8", "{\"ok\":false}");
 }
