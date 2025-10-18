@@ -19,9 +19,6 @@ async function fetchConfig() {
     document.getElementById('measure_interval_ms').value = json.measure_interval_ms || 200;
     document.getElementById('measure_offset_cm').value = json.measure_offset_cm || 0;
 
-    document.getElementById('display_brightness').value = json.display_brightness || 150;
-    document.getElementById('display_refresh_ms').value = json.display_refresh_ms || 300;
-
     document.getElementById('device_name').value = json.device_name || '';
     document.getElementById('interactive_timeout_ms').value = json.interactive_timeout_ms || 60000;
     document.getElementById('deepsleep_interval_s').value = json.deepsleep_interval_s || 30;
@@ -46,9 +43,6 @@ function gatherConfig() {
 
   obj.measure_interval_ms = parseInt(document.getElementById('measure_interval_ms').value) || 200;
   obj.measure_offset_cm = parseFloat(document.getElementById('measure_offset_cm').value) || 0.0;
-
-  obj.display_brightness = parseInt(document.getElementById('display_brightness').value) || 150;
-  obj.display_refresh_ms = parseInt(document.getElementById('display_refresh_ms').value) || 300;
 
   obj.device_name = document.getElementById('device_name').value || '';
   obj.interactive_timeout_ms = parseInt(document.getElementById('interactive_timeout_ms').value) || 60000;

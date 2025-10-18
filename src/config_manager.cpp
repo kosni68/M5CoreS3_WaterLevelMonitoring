@@ -39,8 +39,6 @@ void ConfigManager::applyDefaultsIfNeeded()
 
     if (config_.measure_interval_ms < 50)
         config_.measure_interval_ms = 1000;
-    if (config_.display_brightness == 0 || config_.display_brightness > 255)
-        config_.display_brightness = 128;
     if (config_.mqtt_port == 0)
         config_.mqtt_port = 1883;
     if (strlen(config_.mqtt_host) == 0)
@@ -67,9 +65,6 @@ bool ConfigManager::loadFromPreferences()
 
     config_.measure_interval_ms = prefs.getUInt("measure_interval_ms", 1000);
     config_.measure_offset_cm = prefs.getFloat("measure_offset_cm", 0.0f);
-
-    config_.display_brightness = prefs.getUChar("display_brightness", 128);
-    config_.display_refresh_ms = prefs.getUInt("display_refresh_ms", 500);
 
     prefs.getString("device_name", config_.device_name, sizeof(config_.device_name));
     config_.interactive_timeout_ms = prefs.getUInt("interactive_timeout_ms", 60000);
@@ -100,9 +95,6 @@ bool ConfigManager::save()
     prefs.putUInt("measure_interval_ms", config_.measure_interval_ms);
     prefs.putFloat("measure_offset_cm", config_.measure_offset_cm);
 
-    prefs.putUChar("display_brightness", config_.display_brightness);
-    prefs.putUInt("display_refresh_ms", config_.display_refresh_ms);
-
     prefs.putString("device_name", config_.device_name);
     prefs.putUInt("interactive_timeout_ms", config_.interactive_timeout_ms);
     prefs.putUInt("deepsleep_interval_s", config_.deepsleep_interval_s);
@@ -128,9 +120,6 @@ String ConfigManager::toJsonString()
 
     doc["measure_interval_ms"] = config_.measure_interval_ms;
     doc["measure_offset_cm"] = config_.measure_offset_cm;
-
-    doc["display_brightness"] = config_.display_brightness;
-    doc["display_refresh_ms"] = config_.display_refresh_ms;
 
     doc["device_name"] = config_.device_name;
     doc["interactive_timeout_ms"] = config_.interactive_timeout_ms;
@@ -171,11 +160,6 @@ bool ConfigManager::updateFromJson(const String &json)
     if (doc["measure_offset_cm"].is<float>())
         config_.measure_offset_cm = doc["measure_offset_cm"];
 
-    if (doc["display_brightness"].is<uint8_t>())
-        config_.display_brightness = doc["display_brightness"];
-    if (doc["display_refresh_ms"].is<uint32_t>())
-        config_.display_refresh_ms = doc["display_refresh_ms"];
-
     if (doc["device_name"].is<const char *>())
         strlcpy(config_.device_name, doc["device_name"], sizeof(config_.device_name));
     if (doc["interactive_timeout_ms"].is<uint32_t>())
@@ -208,12 +192,6 @@ float ConfigManager::getMeasureOffsetCm()
 {
     std::lock_guard<std::mutex> lk(mutex_);
     return config_.measure_offset_cm;
-}
-
-uint8_t ConfigManager::getDisplayBrightness()
-{
-    std::lock_guard<std::mutex> lk(mutex_);
-    return config_.display_brightness;
 }
 
 bool ConfigManager::isMQTTEnabled()

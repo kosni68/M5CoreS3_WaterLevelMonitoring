@@ -25,9 +25,6 @@ struct AppConfig
     uint32_t measure_interval_ms;
     float measure_offset_cm;
 
-    uint8_t display_brightness;
-    uint32_t display_refresh_ms;
-
     char device_name[DEVICE_NAME_LEN];
     uint32_t interactive_timeout_ms;
     uint32_t deepsleep_interval_s;
@@ -50,7 +47,6 @@ public:
     AppConfig getConfig();
     uint32_t getMeasureIntervalMs();
     float getMeasureOffsetCm();
-    uint8_t getDisplayBrightness();
     bool isMQTTEnabled();
     const char *getAdminUser();
     const char *getAdminPass();
