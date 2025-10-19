@@ -4,17 +4,18 @@
 
 # Répertoires à inclure
 $dirs = @(
-    ".\data",
-    ".\src"
+    "..\data",
+    "..\src"
 )
 
 # Fichiers spécifiques à inclure
 $files = @(
-    ".\platformio.ini"
+    ".\Chatgpt_instruction.md",
+    "..\platformio.ini"
 )
 
 # Extensions à inclure
-$ext = ".txt", ".cpp", ".c", ".h", ".hpp", ".html", ".css", ".js", ".ini"
+$ext = ".md",".txt", ".cpp", ".c", ".h", ".hpp", ".html", ".css", ".js", ".ini"
 
 # Combine les répertoires et fichiers en une seule liste
 $paths = $dirs + $files

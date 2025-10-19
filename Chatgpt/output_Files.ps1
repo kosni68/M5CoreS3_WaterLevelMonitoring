@@ -37,7 +37,7 @@ function Write-FileDetails {
     Write-Output "-----------------------------------------"
 
     try {
-        $content = Get-Content -Path $FileInfo.FullName -Raw -ErrorAction Stop
+        $content = Get-Content -Path $FileInfo.FullName -Raw -Encoding UTF8 -ErrorAction Stop
         Write-Output $content
     }
     catch {
