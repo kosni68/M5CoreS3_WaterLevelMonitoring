@@ -38,13 +38,6 @@ void startWebServer()
             delay(1000);
     }
 
-    // Initialisation du gestionnaire de configuration
-    if (!ConfigManager::instance().begin())
-    {
-        Serial.println("[WEB][WARN] ConfigManager n’a pas pu charger la configuration, utilisation des valeurs par défaut.");
-        ConfigManager::instance().save();
-    }
-
     // Tentative de connexion Wi-Fi
     if (!connectWiFiShort(8000))
     {

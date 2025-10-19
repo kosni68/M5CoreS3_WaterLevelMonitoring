@@ -15,6 +15,13 @@ void setup() {
     Serial.begin(115200);
     DEBUG_PRINT("Booting M5CoreS3 JSN_SR04T...");
 
+    // Initialisation du gestionnaire de configuration
+    if (!ConfigManager::instance().begin())
+    {
+        Serial.println("[WEB][WARN] ConfigManager n’a pas pu charger la configuration, utilisation des valeurs par défaut.");
+        ConfigManager::instance().save();
+    }
+
     initSensor();
     loadCalibrations();
     computePolynomialFrom3Points();
