@@ -45,7 +45,6 @@ function refreshDistance(){
       document.getElementById('est').innerText  = (e!==null && e>-0.5)?e.toFixed(1):'--';
       document.getElementById('dur').innerText  = (d!==null)?d:'--';
 
-      // Init des niveaux cuve à partir du backend une seule fois
       if (!cuveInitDone && typeof j.cuveVide === 'number' && typeof j.cuvePleine === 'number') {
         document.getElementById('v').value = j.cuveVide.toFixed(0);
         document.getElementById('p').value = j.cuvePleine.toFixed(0);
@@ -80,9 +79,19 @@ function refreshCalibs(){
 
 function save(id){
   const val = document.getElementById('h'+id).value;
-  fetch('/save_calib?id='+id+'&height='+val, {method:'POST'})
+  const body = new URLSearchParams({ id: String(id), height: String(val) });
+  fetch('/save_calib', {
+      method:'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body
+  })
     .then(r=>r.json())
-    .then(j=>{ if (j.ok) alert('Saved'); refreshCalibs();});
+    .then(j=>{
+      if (j.ok) alert('Saved');
+      else alert('Erreur save_calib');
+      refreshCalibs();
+    })
+    .catch(e=>alert('Erreur save_calib: '+e));
 }
 
 function saveCuve(){
