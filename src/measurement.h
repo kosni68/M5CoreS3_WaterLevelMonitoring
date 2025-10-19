@@ -3,8 +3,9 @@
 
 void sensorTask(void *pv);
 void initSensor();
+float measureDistanceStable();
 float measureDistanceCmOnce();
-float runningAverage(float newVal, float prevAvg, float alpha=0.25f);
+float runningAverage(float newVal, float prevAvg, float alpha = 0.25f);
 float estimateHeightFromMeasured(float x);
 bool computePolynomialFrom3Points();
 void loadCalibrations();

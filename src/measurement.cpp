@@ -27,19 +27,22 @@ Preferences preferences;
 void sensorTask(void *pv) {
   float avg = 0.0f;
   for (;;) {
-    float m = measureDistanceCmOnce();
+      float m = measureDistanceStable();
 
-    // Apply configurable offset (dynamic)
-    float offset = ConfigManager::instance().getMeasureOffsetCm();
-    if (m > 0) m += offset;
+      // Apply configurable offset (dynamic)
+      float offset = ConfigManager::instance().getMeasureOffsetCm();
+      if (m > 0)
+          m += offset;
 
-    avg = runningAverage(m, avg, 0.25f);
-    float est = NAN;
-    if (avg > 0.0f) est = estimateHeightFromMeasured(avg);
-    {
-      std::lock_guard<std::mutex> lock(distMutex);
-      lastMeasuredCm = avg; lastEstimatedHeight = est;
-    }
+      avg = runningAverage(m, avg, 0.25f);
+      float est = NAN;
+      if (avg > 0.0f)
+          est = estimateHeightFromMeasured(avg);
+      {
+          std::lock_guard<std::mutex> lock(distMutex);
+          lastMeasuredCm = avg;
+          lastEstimatedHeight = est;
+      }
 
     // Dynamic period from ConfigManager (allows live tuning)
     uint32_t periodMs = ConfigManager::instance().getMeasureIntervalMs();
@@ -60,10 +63,30 @@ float measureDistanceCmOnce() {
     digitalWrite(trigPin, HIGH);
     delayMicroseconds(20);
     digitalWrite(trigPin, LOW);
-    unsigned long duration = pulseIn(echoPin, HIGH, 30000UL);
+    unsigned long duration = pulseInLong(echoPin, HIGH, 30000UL);
     lastDurationUs = duration;
     if (duration == 0) return -1.0f;
     return duration * 0.01715f;
+}
+
+float measureDistanceStable()
+{
+    const int N = 5;
+    float values[N];
+    int count = 0;
+    for (int i = 0; i < N; ++i)
+    {
+        float d = measureDistanceCmOnce();
+        if (d > 2 && d < 400)
+            values[count++] = d; // filtre bruit
+        delay(50);
+    }
+    if (count == 0)
+        return -1;
+    // tri rapide
+    std::sort(values, values + count);
+    // moyenne médiane (robuste)
+    return values[count / 2];
 }
 
 float runningAverage(float newVal, float prevAvg, float alpha) {
