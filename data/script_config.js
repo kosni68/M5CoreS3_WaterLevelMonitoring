@@ -6,30 +6,37 @@ async function fetchConfig() {
       return;
     }
     const json = await res.json();
-    // Populate fields
+
+    // Wi-Fi
+    document.getElementById('wifi_ssid').value = json.wifi_ssid || '';
+    // wifi_pass masqué côté serveur; on NE PASSE PAS de valeur ici
+
+    // MQTT
     document.getElementById('mqtt_enabled').checked = json.mqtt_enabled === true;
     document.getElementById('mqtt_host').value = json.mqtt_host || '';
     document.getElementById('mqtt_port').value = json.mqtt_port || 1883;
     document.getElementById('mqtt_user').value = json.mqtt_user || '';
-    // don't fill mqtt_pass if masked; attempt to leave empty so user can change if needed
+    // mqtt_pass masqué côté serveur; on laisse vide pour saisie manuelle si besoin
     document.getElementById('mqtt_topic').value = json.mqtt_topic || '';
 
-    document.getElementById('measure_interval_ms').value = json.measure_interval_ms || 200;
+    // Mesure
+    document.getElementById('measure_interval_ms').value = json.measure_interval_ms || 1000;
     document.getElementById('measure_offset_cm').value = json.measure_offset_cm || 0;
 
-    // NEW: stabilisation / filtre bruit
+    // Stabilisation / filtre bruit
     document.getElementById('avg_alpha').value = (typeof json.avg_alpha === 'number') ? json.avg_alpha : 0.25;
     document.getElementById('median_n').value = json.median_n || 5;
     document.getElementById('median_delay_ms').value = json.median_delay_ms || 50;
     document.getElementById('filter_min_cm').value = (typeof json.filter_min_cm === 'number') ? json.filter_min_cm : 2.0;
     document.getElementById('filter_max_cm').value = (typeof json.filter_max_cm === 'number') ? json.filter_max_cm : 400.0;
 
+    // Divers
     document.getElementById('device_name').value = json.device_name || '';
-    document.getElementById('interactive_timeout_ms').value = json.interactive_timeout_ms || 60000;
+    document.getElementById('interactive_timeout_ms').value = json.interactive_timeout_ms || 600000; // 10 min aligné
     document.getElementById('deepsleep_interval_s').value = json.deepsleep_interval_s || 30;
 
     document.getElementById('admin_user').value = json.admin_user || '';
-    // admin_pass left empty (masked)
+    // admin_pass masqué; laissé vide
     showStatus('Config chargée', false);
   } catch (e) {
     showStatus('Erreur fetch: ' + e, true);
@@ -38,6 +45,13 @@ async function fetchConfig() {
 
 function gatherConfig() {
   const obj = {};
+
+  // Wi-Fi
+  obj.wifi_ssid = document.getElementById('wifi_ssid').value || '';
+  const wpass = document.getElementById('wifi_pass').value;
+  if (wpass && wpass.length > 0) obj.wifi_pass = wpass;
+
+  // MQTT
   obj.mqtt_enabled = document.getElementById('mqtt_enabled').checked;
   obj.mqtt_host = document.getElementById('mqtt_host').value;
   obj.mqtt_port = parseInt(document.getElementById('mqtt_port').value) || 1883;
@@ -46,23 +60,25 @@ function gatherConfig() {
   if (mp && mp.length > 0) obj.mqtt_pass = mp;
   obj.mqtt_topic = document.getElementById('mqtt_topic').value;
 
-  obj.measure_interval_ms = parseInt(document.getElementById('measure_interval_ms').value) || 200;
+  // Mesure
+  obj.measure_interval_ms = parseInt(document.getElementById('measure_interval_ms').value) || 1000;
   obj.measure_offset_cm = parseFloat(document.getElementById('measure_offset_cm').value) || 0.0;
 
-  // NEW: stabilisation / filtre bruit
+  // Stabilisation / filtre bruit
   obj.avg_alpha = Math.max(0, Math.min(1, parseFloat(document.getElementById('avg_alpha').value)));
   obj.median_n = Math.max(1, Math.min(15, parseInt(document.getElementById('median_n').value) || 5));
   obj.median_delay_ms = Math.max(0, Math.min(1000, parseInt(document.getElementById('median_delay_ms').value) || 50));
   obj.filter_min_cm = parseFloat(document.getElementById('filter_min_cm').value);
   obj.filter_max_cm = parseFloat(document.getElementById('filter_max_cm').value);
 
+  // Divers
   obj.device_name = document.getElementById('device_name').value || '';
-  obj.interactive_timeout_ms = parseInt(document.getElementById('interactive_timeout_ms').value) || 60000;
+  obj.interactive_timeout_ms = parseInt(document.getElementById('interactive_timeout_ms').value) || 600000;
   obj.deepsleep_interval_s = parseInt(document.getElementById('deepsleep_interval_s').value) || 30;
 
   obj.admin_user = document.getElementById('admin_user').value || '';
   const ap = document.getElementById('admin_pass').value;
-  if (ap && ap.length > 0) obj.admin_pass = ap; // only include if user provided a new pass
+  if (ap && ap.length > 0) obj.admin_pass = ap; // uniquement si l'utilisateur fournit un nouveau mot de passe
 
   return obj;
 }
@@ -78,8 +94,9 @@ async function saveConfig() {
     const j = await res.json();
     if (res.ok && j.ok) {
       showStatus('Config sauvegardée', false);
-      // Clear password field after saving
+      // Clear password fields après sauvegarde
       document.getElementById('admin_pass').value = '';
+      document.getElementById('wifi_pass').value = '';
       document.getElementById('mqtt_pass').value = '';
     } else {
       showStatus('Erreur sauvegarde', true);

@@ -1,7 +1,7 @@
 #pragma once
 #include <Arduino.h>
 
-bool connectWiFiShort(uint32_t timeoutMs=8000);
+bool connectWiFiShort(uint32_t timeoutMs = 8000);
 void disconnectWiFiClean();
 void printLogHeapStack();
 void convertUint16ToBooleans(int value, bool bits[16]);

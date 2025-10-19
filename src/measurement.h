@@ -14,6 +14,7 @@ float measureDistanceCmOnce();
 float runningAverage(float newVal, float prevAvg, float alpha = 0.25f);
 float estimateHeightFromMeasured(float x);
 bool computePolynomialFrom3Points();
+bool isPolynomialValid();
 void loadCalibrations();
 void saveCalibrationToNVS(int idx, float measured, float height);
 void saveCuveLevels();

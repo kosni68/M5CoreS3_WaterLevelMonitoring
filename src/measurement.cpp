@@ -30,8 +30,14 @@ float cuvePleine = 42.0f;
 
 // Polynomial coeffs
 double a_coef = 0, b_coef = 0, c_coef = 0;
+static bool polyValid = false;
 
 Preferences preferences;
+
+bool isPolynomialValid()
+{
+    return polyValid;
+}
 
 void sensorTask(void *pv)
 {
@@ -67,7 +73,7 @@ void sensorTask(void *pv)
         // Pas de mise à jour de avg si mesure invalide (m <= 0)
 
         float est = NAN;
-        if (isfinite(avg) && avg > 0.0f)
+        if (isfinite(avg) && avg > 0.0f && isPolynomialValid())
         {
             est = estimateHeightFromMeasured(avg);
         }
@@ -155,6 +161,8 @@ bool computePolynomialFrom3Points()
 {
     double x1 = calib_m[0], x2 = calib_m[1], x3 = calib_m[2];
     double y1 = calib_h[0], y2 = calib_h[1], y3 = calib_h[2];
+    polyValid = false;
+
     if (x1 == 0 || x2 == 0 || x3 == 0)
         return false;
     if ((x1 == x2) || (x1 == x3) || (x2 == x3))
@@ -162,9 +170,12 @@ bool computePolynomialFrom3Points()
     double denom = (x1 - x2) * (x1 - x3) * (x2 - x3);
     if (denom == 0)
         return false;
+
     a_coef = (x3 * (y2 - y1) + x2 * (y1 - y3) + x1 * (y3 - y2)) / denom;
     b_coef = (x3 * x3 * (y1 - y2) + x2 * x2 * (y3 - y1) + x1 * x1 * (y2 - y3)) / denom;
     c_coef = (x2 * x3 * (x2 - x3) * y1 + x3 * x1 * (x3 - x1) * y2 + x1 * x2 * (x1 - x2) * y3) / denom;
+
+    polyValid = true;
     return true;
 }
 
@@ -219,4 +230,5 @@ void clearCalibrations()
     preferences.end();
     for (int i = 0; i < 3; i++)
         calib_m[i] = 0;
+    polyValid = false;
 }

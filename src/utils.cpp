@@ -1,25 +1,44 @@
 #include <WiFi.h>
 #include "utils.h"
 #include "config.h"
+#include "config_manager.h"
 
-bool connectWiFiShort(uint32_t timeoutMs) {
-    if (WiFi.status() == WL_CONNECTED) return true;
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(WIFI_SSID, WIFI_PASS);
-    uint32_t t0 = millis();
-    while (millis() - t0 < timeoutMs) {
-        if (WiFi.status() == WL_CONNECTED) return true;
-        delay(200);
-    }
-    return (WiFi.status() == WL_CONNECTED);
+bool connectWiFiShort(uint32_t timeoutMs)
+{
+  if (WiFi.status() == WL_CONNECTED)
+    return true;
+
+  const auto cfg = ConfigManager::instance().getConfig();
+  if (strlen(cfg.wifi_ssid) == 0)
+  {
+    // Pas de SSID configuré -> pas de STA
+    return false;
+  }
+
+  WiFi.mode(WIFI_STA);
+  if (strlen(cfg.wifi_pass) == 0)
+    WiFi.begin(cfg.wifi_ssid);
+  else
+    WiFi.begin(cfg.wifi_ssid, cfg.wifi_pass);
+
+  uint32_t t0 = millis();
+  while (millis() - t0 < timeoutMs)
+  {
+    if (WiFi.status() == WL_CONNECTED)
+      return true;
+    delay(200);
+  }
+  return (WiFi.status() == WL_CONNECTED);
 }
 
-void disconnectWiFiClean() {
-    if (WiFi.status() == WL_CONNECTED) {
-        WiFi.disconnect(true, true);
-        WiFi.mode(WIFI_OFF);
-        delay(50);
-    }
+void disconnectWiFiClean()
+{
+  if (WiFi.status() == WL_CONNECTED)
+  {
+    WiFi.disconnect(true, true);
+    WiFi.mode(WIFI_OFF);
+    delay(50);
+  }
 }
 
 void printLogHeapStack()
@@ -54,7 +73,6 @@ void convertUint16ToBooleans(int value, bool bits[16])
 
 void updateMinMaxTime(unsigned int startTime, unsigned int &currentTime, unsigned int &minTime, unsigned int &maxTime)
 {
-
   currentTime = millis() - startTime;
 
   if (currentTime < minTime)

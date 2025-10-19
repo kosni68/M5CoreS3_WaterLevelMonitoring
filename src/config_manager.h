@@ -3,9 +3,12 @@
 #include <ArduinoJson.h>
 #include <mutex>
 
+#define WIFI_SSID_LEN 32
+#define WIFI_PASS_LEN 64
+
 #define MQTT_HOST_LEN 64
 #define MQTT_USER_LEN 32
-#define MQTT_PASS_LEN 32
+#define MQTT_PASS_LEN 64
 #define MQTT_TOPIC_LEN 64
 #define DEVICE_NAME_LEN 32
 #define ADMIN_USER_LEN 16
@@ -14,6 +17,11 @@
 
 struct AppConfig
 {
+    // ---- Wi-Fi (STA) ----
+    char wifi_ssid[WIFI_SSID_LEN];
+    char wifi_pass[WIFI_PASS_LEN];
+
+    // ---- MQTT ----
     bool mqtt_enabled;
     char mqtt_host[MQTT_HOST_LEN];
     uint16_t mqtt_port;
@@ -21,16 +29,18 @@ struct AppConfig
     char mqtt_pass[MQTT_PASS_LEN];
     char mqtt_topic[MQTT_TOPIC_LEN];
 
+    // ---- Mesure ----
     uint32_t measure_interval_ms;
     float measure_offset_cm;
 
-    // stabilisation / filtre
+    // ---- Stabilisation / filtre ----
     float avg_alpha;          // 0..1
     uint16_t median_n;        // 1..15
     uint16_t median_delay_ms; // 0..1000
     float filter_min_cm;      // e.g. 2.0
     float filter_max_cm;      // e.g. 400.0
 
+    // ---- Divers ----
     char device_name[DEVICE_NAME_LEN];
     uint32_t interactive_timeout_ms;
     uint32_t deepsleep_interval_s;
@@ -74,6 +84,6 @@ private:
     void applyDefaultsIfNeeded();
     bool loadFromPreferences();
 
-    AppConfig config_;
+    AppConfig config_{};
     std::mutex mutex_;
 };

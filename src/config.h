@@ -5,14 +5,19 @@
 
 // ---------- DEBUG ----------
 #define DEBUG true
-#define DEBUG_PRINT(x)  if(DEBUG){ Serial.println(x); }
-#define DEBUG_PRINTF(...) if(DEBUG){ Serial.printf(__VA_ARGS__); }
-
-extern const char* WIFI_SSID;
-extern const char* WIFI_PASS;
+#define DEBUG_PRINT(x)     \
+    if (DEBUG)             \
+    {                      \
+        Serial.println(x); \
+    }
+#define DEBUG_PRINTF(...)           \
+    if (DEBUG)                      \
+    {                               \
+        Serial.printf(__VA_ARGS__); \
+    }
 
 extern std::mutex distMutex;
-extern std::mutex mqttMutex; 
+extern std::mutex mqttMutex;
 extern std::mutex displayMutex;
 
 // ---------- Pins ----------

@@ -9,6 +9,8 @@ function sendMQTT(){
 }
 
 let labels=[], measData=[], estData=[], durData=[];
+let cuveInitDone = false;
+
 const ctx=document.getElementById('chart').getContext('2d');
 const chart=new Chart(ctx,{
   type:'line',
@@ -22,6 +24,8 @@ const chart=new Chart(ctx,{
   },
   options:{
     responsive:true,
+    spanGaps:false,
+    animation:false,
     scales:{
       y1:{type:'linear',position:'left'},
       y2:{type:'linear',position:'right'}
@@ -33,15 +37,29 @@ function refreshDistance(){
   fetch('/distance')
     .then(r=>r.json())
     .then(j=>{
-      document.getElementById('meas').innerText = j.measured_cm!==null?j.measured_cm.toFixed(1):'--';
-      document.getElementById('est').innerText = j.estimated_cm!==null?j.estimated_cm.toFixed(1):'--';
-      document.getElementById('dur').innerText = j.duration_us!==null?j.duration_us:'--';
+      const m = (j.measured_cm===null)?null:j.measured_cm;
+      const e = (j.estimated_cm===null)?null:j.estimated_cm;
+      const d = (j.measured_cm===null)?null:j.duration_us;
+
+      document.getElementById('meas').innerText = (m!==null)?m.toFixed(1):'--';
+      document.getElementById('est').innerText  = (e!==null && e>-0.5)?e.toFixed(1):'--';
+      document.getElementById('dur').innerText  = (d!==null)?d:'--';
+
+      // Init des niveaux cuve à partir du backend une seule fois
+      if (!cuveInitDone && typeof j.cuveVide === 'number' && typeof j.cuvePleine === 'number') {
+        document.getElementById('v').value = j.cuveVide.toFixed(0);
+        document.getElementById('p').value = j.cuvePleine.toFixed(0);
+        cuveInitDone = true;
+      }
+
       const t=new Date().toLocaleTimeString();
       labels.push(t);
       if(labels.length>60){labels.shift();measData.shift();estData.shift();durData.shift();}
-      measData.push(j.measured_cm||0);
-      estData.push(j.estimated_cm||0);
-      durData.push(j.duration_us||0);
+
+      measData.push(m !== null ? m : null);
+      estData.push(e !== null ? e : null);
+      durData.push(d !== null ? d : null);
+
       chart.update();
     });
 }

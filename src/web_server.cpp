@@ -38,7 +38,7 @@ void startWebServer()
             delay(1000);
     }
 
-    // Tentative de connexion Wi-Fi
+    // Tentative de connexion Wi-Fi (STA si configuré, sinon AP)
     if (!connectWiFiShort(8000))
     {
         Serial.println("[WEB][WARN] Échec de connexion Wi-Fi. Activation du mode point d’accès...");
@@ -148,24 +148,54 @@ void startWebServer()
         Serial.println("[WEB] GET /api/config");
         handleGetConfig(request); });
 
-    // --- Handler POST /api/config avec gestion du corps JSON ---
-    server.on("/api/config", HTTP_POST, [](AsyncWebServerRequest *request)
+    // --- Handler POST /api/config : auth + body par requête ---
+    server.on("/api/config", HTTP_POST,
+              // onRequest (vide)
+              [](AsyncWebServerRequest *request) {},
+              // onUpload (non utilisé)
+              NULL,
+              // onBody
+              [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total)
               {
-                  // on ne traite rien ici, juste placeholder
-              },
-              NULL, [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total)
-              {
-               static String body;
-               if (index == 0) {
-                   body = "";
-                   Serial.printf("[WEB] Début réception body JSON (%u octets)\n", total);
-               }
-               body += String((char *)data).substring(0, len);
-               if (index + len == total) {
-                   Serial.printf("[WEB] Corps JSON complet reçu (%u octets)\n", total);
-                   handlePostConfig(request, body);
-                   body = "";
-               } });
+                  // Authentification avant d'accepter le body
+                  const char *adminUser = ConfigManager::instance().getAdminUser();
+                  const char *adminPass = ConfigManager::instance().getAdminPass();
+                  if (!request->authenticate(adminUser, adminPass))
+                  {
+                      Serial.println("[WEB][AUTH] /api/config POST non autorisé");
+                      request->requestAuthentication();
+                      return;
+                  }
+
+                  if (index == 0)
+                  {
+                      if (total > 4096)
+                      {
+                          Serial.printf("[WEB] Payload trop gros (%u)\n", (unsigned)total);
+                          request->send(413, "application/json; charset=utf-8", "{\"ok\":false,\"err\":\"payload too large\"}");
+                          return;
+                      }
+                      request->_tempObject = new String();
+                      ((String *)request->_tempObject)->reserve(total);
+                      Serial.printf("[WEB] Début réception body JSON (%u octets)\n", (unsigned)total);
+                  }
+
+                  String *body = reinterpret_cast<String *>(request->_tempObject);
+                  if (body)
+                  {
+                      body->concat(String((const char *)data).substring(0, len));
+                  }
+
+                  if (index + len == total)
+                  {
+                      Serial.printf("[WEB] Corps JSON complet reçu (%u octets)\n", (unsigned)total);
+                      if (body)
+                      {
+                          handlePostConfig(request, *body);
+                          delete body;
+                          request->_tempObject = nullptr;
+                      }
+                  } });
 
     // --- Lancement du serveur ---
     server.begin();
@@ -300,6 +330,15 @@ void handleGetConfig(AsyncWebServerRequest *request)
 void handlePostConfig(AsyncWebServerRequest *request, const String &body)
 {
     Serial.println("[WEB] POST /api/config reçu");
+
+    // Double check auth (déjà fait dans le onBody, on garde le garde-fou)
+    const char *adminUser = ConfigManager::instance().getAdminUser();
+    const char *adminPass = ConfigManager::instance().getAdminPass();
+    if (!request->authenticate(adminUser, adminPass))
+    {
+        Serial.println("[WEB][AUTH] /api/config POST non autorisé (2nd check)");
+        return request->requestAuthentication();
+    }
 
     if (body.isEmpty())
     {

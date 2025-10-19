@@ -31,26 +31,22 @@ void setup()
 
     if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER)
     {
-        // Repartir de l'EMA persistée si elle existe
         float avg = (isfinite(emaStateCm) ? emaStateCm : NAN);
 
-        // Utiliser l'alpha configuré (fallback 0.25)
         float alpha = ConfigManager::instance().getRunningAverageAlpha();
         if (alpha <= 0.0f || alpha > 1.0f)
             alpha = 0.25f;
 
-        // Quelques mesures pour stabiliser (sans biais d'init)
         for (int i = 0; i < 3; i++)
         {
             float m = measureDistanceStable();
             if (m > 0)
             {
-                // appliquer l'offset dynamique
                 m += ConfigManager::instance().getMeasureOffsetCm();
 
                 if (!isfinite(avg))
                 {
-                    avg = m; // amorçage EMA sans partir de 0
+                    avg = m;
                 }
                 else
                 {
@@ -60,11 +56,9 @@ void setup()
             delay(30);
         }
 
-        // Publier la mesure basée sur l'EMA
         lastEstimatedHeight = (isfinite(avg) ? estimateHeightFromMeasured(avg) : -1.0f);
         lastMeasuredCm = (isfinite(avg) ? avg : -1.0f);
 
-        // Persister l'état EMA pour le prochain cycle
         if (isfinite(avg))
         {
             emaStateCm = avg;
@@ -95,11 +89,19 @@ void loop()
 {
     if (interactiveMode)
     {
-        if ((uint32_t)(millis() - interactiveLastTouchMs.load()) > ConfigManager::instance().getConfig().interactive_timeout_ms)
+        const uint32_t timeout = ConfigManager::instance().getConfig().interactive_timeout_ms;
+        if ((uint32_t)(millis() - interactiveLastTouchMs.load()) > timeout)
         {
-            disconnectWiFiClean();
-            delay(50);
-            goDeepSleep();
+            if (isApModeActive())
+            {
+                interactiveLastTouchMs = millis();
+            }
+            else
+            {
+                disconnectWiFiClean();
+                delay(50);
+                goDeepSleep();
+            }
         }
     }
     delay(10);

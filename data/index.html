@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="fr">
+
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -7,9 +8,12 @@
   <link rel="stylesheet" href="/style.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
+
 <body>
   <h2>M5 Puits - Dashboard</h2>
-  <a href="/config.html"><button>Configurer l'appareil</button><button onclick="sendMQTT()">Envoyer MQTT</button></a>
+  <a href="/config.html"><button>Configurer l'appareil</button></a>
+  <button onclick="sendMQTT()">Envoyer MQTT</button>
+
   <div>
     Mesuré: <span id="meas">--</span> cm &nbsp;
     Estimé: <span id="est">--</span> cm &nbsp;
@@ -29,4 +33,5 @@
 
   <script src="/script.js"></script>
 </body>
+
 </html>
