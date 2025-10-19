@@ -292,10 +292,17 @@ void handleClearCalib(AsyncWebServerRequest *request)
 void handleSetCuve(AsyncWebServerRequest *request)
 {
     Serial.println("[WEB] Mise à jour des niveaux de cuve...");
+
+    // Lire d'abord les params POST, sinon fallback sur query
     if (request->hasParam("vide", true))
         cuveVide = request->getParam("vide", true)->value().toFloat();
+    else if (request->hasParam("vide"))
+        cuveVide = request->getParam("vide")->value().toFloat();
+
     if (request->hasParam("pleine", true))
         cuvePleine = request->getParam("pleine", true)->value().toFloat();
+    else if (request->hasParam("pleine"))
+        cuvePleine = request->getParam("pleine")->value().toFloat();
 
     Serial.printf("  -> Vide=%.2f, Pleine=%.2f\n", cuveVide, cuvePleine);
     saveCuveLevels();
