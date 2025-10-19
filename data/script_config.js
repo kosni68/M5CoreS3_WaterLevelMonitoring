@@ -1,5 +1,3 @@
-// script_config.js
-// Chargé par /config.html
 async function fetchConfig() {
   try {
     const res = await fetch('/api/config', {cache: 'no-store'});
@@ -18,6 +16,13 @@ async function fetchConfig() {
 
     document.getElementById('measure_interval_ms').value = json.measure_interval_ms || 200;
     document.getElementById('measure_offset_cm').value = json.measure_offset_cm || 0;
+
+    // NEW: stabilisation / filtre bruit
+    document.getElementById('avg_alpha').value = (typeof json.avg_alpha === 'number') ? json.avg_alpha : 0.25;
+    document.getElementById('median_n').value = json.median_n || 5;
+    document.getElementById('median_delay_ms').value = json.median_delay_ms || 50;
+    document.getElementById('filter_min_cm').value = (typeof json.filter_min_cm === 'number') ? json.filter_min_cm : 2.0;
+    document.getElementById('filter_max_cm').value = (typeof json.filter_max_cm === 'number') ? json.filter_max_cm : 400.0;
 
     document.getElementById('device_name').value = json.device_name || '';
     document.getElementById('interactive_timeout_ms').value = json.interactive_timeout_ms || 60000;
@@ -43,6 +48,13 @@ function gatherConfig() {
 
   obj.measure_interval_ms = parseInt(document.getElementById('measure_interval_ms').value) || 200;
   obj.measure_offset_cm = parseFloat(document.getElementById('measure_offset_cm').value) || 0.0;
+
+  // NEW: stabilisation / filtre bruit
+  obj.avg_alpha = Math.max(0, Math.min(1, parseFloat(document.getElementById('avg_alpha').value)));
+  obj.median_n = Math.max(1, Math.min(15, parseInt(document.getElementById('median_n').value) || 5));
+  obj.median_delay_ms = Math.max(0, Math.min(1000, parseInt(document.getElementById('median_delay_ms').value) || 50));
+  obj.filter_min_cm = parseFloat(document.getElementById('filter_min_cm').value);
+  obj.filter_max_cm = parseFloat(document.getElementById('filter_max_cm').value);
 
   obj.device_name = document.getElementById('device_name').value || '';
   obj.interactive_timeout_ms = parseInt(document.getElementById('interactive_timeout_ms').value) || 60000;

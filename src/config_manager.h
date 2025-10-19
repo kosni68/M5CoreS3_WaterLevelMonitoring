@@ -14,7 +14,6 @@
 
 struct AppConfig
 {
-
     bool mqtt_enabled;
     char mqtt_host[MQTT_HOST_LEN];
     uint16_t mqtt_port;
@@ -24,6 +23,13 @@ struct AppConfig
 
     uint32_t measure_interval_ms;
     float measure_offset_cm;
+
+    // stabilisation / filtre
+    float avg_alpha;          // 0..1
+    uint16_t median_n;        // 1..15
+    uint16_t median_delay_ms; // 0..1000
+    float filter_min_cm;      // e.g. 2.0
+    float filter_max_cm;      // e.g. 400.0
 
     char device_name[DEVICE_NAME_LEN];
     uint32_t interactive_timeout_ms;
@@ -47,6 +53,14 @@ public:
     AppConfig getConfig();
     uint32_t getMeasureIntervalMs();
     float getMeasureOffsetCm();
+
+    // NEW getters
+    float getRunningAverageAlpha();
+    uint16_t getMedianSamples();
+    uint16_t getMedianSampleDelayMs();
+    float getFilterMinCm();
+    float getFilterMaxCm();
+
     bool isMQTTEnabled();
     const char *getAdminUser();
     const char *getAdminPass();

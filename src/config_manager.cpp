@@ -76,6 +76,33 @@ void ConfigManager::applyDefaultsIfNeeded()
         strcpy(config_.app_version, "1.0.0");
         Serial.println("  -> app_version défini à 1.0.0");
     }
+
+    // NEW defaults
+    if (config_.avg_alpha <= 0.0f || config_.avg_alpha > 1.0f)
+    {
+        config_.avg_alpha = 0.25f;
+        Serial.println("  -> avg_alpha défini à 0.25");
+    }
+    if (config_.median_n == 0 || config_.median_n > 15)
+    {
+        config_.median_n = 5;
+        Serial.println("  -> median_n défini à 5");
+    }
+    if (config_.median_delay_ms > 1000)
+    {
+        config_.median_delay_ms = 50;
+        Serial.println("  -> median_delay_ms défini à 50");
+    }
+    if (config_.filter_min_cm <= 0.0f)
+    {
+        config_.filter_min_cm = 2.0f;
+        Serial.println("  -> filter_min_cm défini à 2.0");
+    }
+    if (config_.filter_max_cm < config_.filter_min_cm)
+    {
+        config_.filter_max_cm = 400.0f;
+        Serial.println("  -> filter_max_cm défini à 400.0");
+    }
 }
 
 bool ConfigManager::loadFromPreferences()
@@ -99,6 +126,13 @@ bool ConfigManager::loadFromPreferences()
     config_.measure_interval_ms = prefs.getUInt("meas_int_ms", 1000);
     config_.measure_offset_cm = prefs.getFloat("meas_off_cm", 0.0f);
 
+    // NEW
+    config_.avg_alpha = prefs.getFloat("avg_alpha", 0.25f);
+    config_.median_n = prefs.getUShort("median_n", 5);
+    config_.median_delay_ms = prefs.getUShort("median_delay_ms", 50);
+    config_.filter_min_cm = prefs.getFloat("f_min_cm", 2.0f);
+    config_.filter_max_cm = prefs.getFloat("f_max_cm", 400.0f);
+
     prefs.getString("dev_name", config_.device_name, sizeof(config_.device_name));
     config_.interactive_timeout_ms = prefs.getUInt("int_to_ms", 60000);
     config_.deepsleep_interval_s = prefs.getUInt("deep_int_s", 30);
@@ -114,6 +148,9 @@ bool ConfigManager::loadFromPreferences()
                   config_.mqtt_host, config_.mqtt_port, config_.mqtt_user);
     Serial.printf("  -> Device: %s, Intervalle mesure: %lu ms, Offset: %.2f cm\n",
                   config_.device_name, config_.measure_interval_ms, config_.measure_offset_cm);
+    Serial.printf("  -> Filtre: alpha=%.2f, N=%u, delay=%u ms, min=%.1f cm, max=%.1f cm\n",
+                  config_.avg_alpha, config_.median_n, config_.median_delay_ms,
+                  config_.filter_min_cm, config_.filter_max_cm);
     Serial.printf("  -> DeepSleep: %lu s, Timeout interactif: %lu ms\n",
                   (unsigned long)config_.deepsleep_interval_s,
                   (unsigned long)config_.interactive_timeout_ms);
@@ -138,6 +175,13 @@ bool ConfigManager::save()
 
     prefs.putUInt("meas_int_ms", config_.measure_interval_ms);
     prefs.putFloat("meas_off_cm", config_.measure_offset_cm);
+
+    // NEW
+    prefs.putFloat("avg_alpha", config_.avg_alpha);
+    prefs.putUShort("median_n", config_.median_n);
+    prefs.putUShort("median_delay_ms", config_.median_delay_ms);
+    prefs.putFloat("f_min_cm", config_.filter_min_cm);
+    prefs.putFloat("f_max_cm", config_.filter_max_cm);
 
     prefs.putString("dev_name", config_.device_name);
     prefs.putUInt("int_to_ms", config_.interactive_timeout_ms);
@@ -167,6 +211,13 @@ String ConfigManager::toJsonString()
     doc["measure_interval_ms"] = config_.measure_interval_ms;
     doc["measure_offset_cm"] = config_.measure_offset_cm;
 
+    // NEW
+    doc["avg_alpha"] = config_.avg_alpha;
+    doc["median_n"] = config_.median_n;
+    doc["median_delay_ms"] = config_.median_delay_ms;
+    doc["filter_min_cm"] = config_.filter_min_cm;
+    doc["filter_max_cm"] = config_.filter_max_cm;
+
     doc["device_name"] = config_.device_name;
     doc["interactive_timeout_ms"] = config_.interactive_timeout_ms;
     doc["deepsleep_interval_s"] = config_.deepsleep_interval_s;
@@ -180,6 +231,7 @@ String ConfigManager::toJsonString()
     Serial.println("[ConfigManager] Conversion en JSON effectuée.");
     return s;
 }
+
 bool ConfigManager::updateFromJson(const String &json)
 {
     Serial.println("[ConfigManager] Mise à jour depuis JSON...");
@@ -214,6 +266,18 @@ bool ConfigManager::updateFromJson(const String &json)
         if (doc["measure_offset_cm"].is<float>())
             config_.measure_offset_cm = doc["measure_offset_cm"];
 
+        // NEW
+        if (doc["avg_alpha"].is<float>())
+            config_.avg_alpha = doc["avg_alpha"];
+        if (doc["median_n"].is<uint16_t>())
+            config_.median_n = doc["median_n"];
+        if (doc["median_delay_ms"].is<uint16_t>())
+            config_.median_delay_ms = doc["median_delay_ms"];
+        if (doc["filter_min_cm"].is<float>())
+            config_.filter_min_cm = doc["filter_min_cm"];
+        if (doc["filter_max_cm"].is<float>())
+            config_.filter_max_cm = doc["filter_max_cm"];
+
         if (doc["device_name"].is<const char *>())
             strlcpy(config_.device_name, doc["device_name"], sizeof(config_.device_name));
         if (doc["interactive_timeout_ms"].is<uint32_t>())
@@ -225,7 +289,7 @@ bool ConfigManager::updateFromJson(const String &json)
             strlcpy(config_.admin_user, doc["admin_user"], sizeof(config_.admin_user));
         if (doc["admin_pass"].is<const char *>())
             strlcpy(config_.admin_pass, doc["admin_pass"], sizeof(config_.admin_pass));
-    } // 🔓 le lock est libéré ici
+    }
 
     Serial.println("  -> Mise à jour de la configuration en mémoire OK.");
 
@@ -258,6 +322,37 @@ float ConfigManager::getMeasureOffsetCm()
 {
     std::lock_guard<std::mutex> lk(mutex_);
     return config_.measure_offset_cm;
+}
+
+// NEW getters
+float ConfigManager::getRunningAverageAlpha()
+{
+    std::lock_guard<std::mutex> lk(mutex_);
+    return config_.avg_alpha;
+}
+
+uint16_t ConfigManager::getMedianSamples()
+{
+    std::lock_guard<std::mutex> lk(mutex_);
+    return config_.median_n;
+}
+
+uint16_t ConfigManager::getMedianSampleDelayMs()
+{
+    std::lock_guard<std::mutex> lk(mutex_);
+    return config_.median_delay_ms;
+}
+
+float ConfigManager::getFilterMinCm()
+{
+    std::lock_guard<std::mutex> lk(mutex_);
+    return config_.filter_min_cm;
+}
+
+float ConfigManager::getFilterMaxCm()
+{
+    std::lock_guard<std::mutex> lk(mutex_);
+    return config_.filter_max_cm;
 }
 
 bool ConfigManager::isMQTTEnabled()

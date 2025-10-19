@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="fr">
+
 <head>
   <meta charset="utf-8">
   <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
@@ -7,6 +8,7 @@
   <title>Configuration - M5 Puits</title>
   <link rel="stylesheet" href="/style.css">
 </head>
+
 <body>
   <h2>Configuration - M5 Puits</h2>
   <a href="/"><button>Retour au dashboard</button></a>
@@ -27,6 +29,13 @@
     <h3>Mesure</h3>
     Intervalle (ms): <input id="measure_interval_ms" type="number" min="50"><br>
     Offset (cm): <input id="measure_offset_cm" type="number" step="0.1"><br>
+
+    <h4>Stabilisation</h4>
+    Alpha (0-1): <input id="avg_alpha" type="number" step="0.01" min="0" max="1"><br>
+    Échantillons médiane (N): <input id="median_n" type="number" min="1" max="15"><br>
+    Délai entre échantillons (ms): <input id="median_delay_ms" type="number" min="0" max="1000"><br>
+    Filtre min (cm): <input id="filter_min_cm" type="number" step="0.1"><br>
+    Filtre max (cm): <input id="filter_max_cm" type="number" step="0.1"><br>
   </section>
 
   <hr>
@@ -48,4 +57,5 @@
 
   <script src="/script_config.js"></script>
 </body>
+
 </html>

@@ -11,7 +11,8 @@
 
 bool interactiveMode = false;
 
-void setup() {
+void setup()
+{
     Serial.begin(115200);
     DEBUG_PRINT("Booting M5CoreS3 JSN_SR04T...");
 
@@ -27,10 +28,12 @@ void setup() {
     computePolynomialFrom3Points();
     setupMQTT();
 
-    if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER) {
-        float avg=0;
-        for(int i=0;i<3;i++){
-            avg = runningAverage(measureDistanceCmOnce(), avg, 0.5f);
+    if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER)
+    {
+        float avg = 0;
+        for (int i = 0; i < 3; i++)
+        {
+            avg = runningAverage(measureDistanceStable(), avg, 0.25f);
             delay(30);
         }
         lastEstimatedHeight = estimateHeightFromMeasured(avg);
@@ -38,9 +41,11 @@ void setup() {
         if (connectWiFiShort(6000))
             publishMQTT_measure();
         goDeepSleep();
-    } else {
+    }
+    else
+    {
         Serial.println("interactive mode");
-        
+
         initDisplay();
 
         startWebServer();
@@ -53,8 +58,10 @@ void setup() {
     }
 }
 
-void loop() {
-    if (interactiveMode) {
+void loop()
+{
+    if (interactiveMode)
+    {
         if ((uint32_t)(millis() - interactiveLastTouchMs.load()) > ConfigManager::instance().getConfig().interactive_timeout_ms)
         {
             disconnectWiFiClean();
