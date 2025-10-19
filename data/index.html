@@ -9,7 +9,7 @@
 </head>
 <body>
   <h2>M5 Puits - Dashboard</h2>
-  <a href="/config.html"><button>Configurer l'appareil</button></a>
+  <a href="/config.html"><button>Configurer l'appareil</button><button onclick="sendMQTT()">Envoyer MQTT</button></a>
   <div>
     Mesuré: <span id="meas">--</span> cm &nbsp;
     Estimé: <span id="est">--</span> cm &nbsp;
@@ -26,7 +26,6 @@
   Pleine: <input id="p" value="42"> cm
   <button onclick="saveCuve()">Save</button>
   <button onclick="clearCalib()">Clear calibs</button>
-  <button onclick="sendMQTT()">Envoyer MQTT</button>
 
   <script src="/script.js"></script>
 </body>

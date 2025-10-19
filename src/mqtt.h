@@ -3,4 +3,3 @@
 
 void setupMQTT();
 bool publishMQTT_measure();
-void mqttPeriodicTask(void *pv);

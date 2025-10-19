@@ -12,10 +12,7 @@
 #include <mutex>
 #include <M5Unified.h>
 
-// Serveur HTTP sur le port 80
 AsyncWebServer server(80);
-extern std::mutex mqttMutex;
-extern volatile bool mqttBusy;
 
 // --- Déclarations des handlers existants ---
 void handleDistanceApi(AsyncWebServerRequest *request);
@@ -29,8 +26,8 @@ void handleSendMQTT(AsyncWebServerRequest *request);
 void handleGetConfig(AsyncWebServerRequest *request);
 void handlePostConfig(AsyncWebServerRequest *request, const String &body);
 
-    // --- Initialisation du serveur ---
-    void startWebServer()
+// --- Initialisation du serveur ---
+void startWebServer()
 {
     Serial.println("[WEB] Initialisation du serveur HTTP...");
 
@@ -284,31 +281,13 @@ void handleSetCuve(AsyncWebServerRequest *request)
 
 void handleSendMQTT(AsyncWebServerRequest *request)
 {
-    {
-        std::lock_guard<std::mutex> lock(mqttMutex);
-        if (mqttBusy)
-        {
-            Serial.println("[WEB][WARN] MQTT déjà en cours d’envoi !");
-            request->send(200, "application/json; charset=utf-8", "{\"ok\":false,\"err\":\"mqtt_busy\"}");
-            return;
-        }
-        mqttBusy = true;
-    }
-
     Serial.println("[WEB] Envoi MQTT manuel...");
     bool ok = publishMQTT_measure();
-
-    {
-        std::lock_guard<std::mutex> lock(mqttMutex);
-        mqttBusy = false;
-    }
 
     Serial.printf("[WEB] MQTT %s\n", ok ? "OK" : "ÉCHEC");
     String resp = String("{\"ok\":") + (ok ? "true" : "false") + "}";
     request->send(200, "application/json; charset=utf-8", resp);
 }
-
-// --- NEW: Config handlers ---
 
 void handleGetConfig(AsyncWebServerRequest *request)
 {
