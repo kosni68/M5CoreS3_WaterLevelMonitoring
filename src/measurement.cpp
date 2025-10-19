@@ -1,12 +1,20 @@
 #include <M5CoreS3.h>
 #include <Preferences.h>
 #include <algorithm> // std::sort
+#include <math.h>    // isnan, isfinite
 #include "measurement.h"
 #include "config.h"
 #include "config_manager.h"
 
 // ---------- Globals ----------
 RTC_DATA_ATTR bool wokeFromTimer = false;
+
+/**
+ * État de la moyenne exponentielle (EMA) persistant en RTC RAM.
+ * - NAN = non initialisé (premier démarrage).
+ * - Conserve la dernière moyenne pour supprimer le biais d'init à 0.
+ */
+RTC_DATA_ATTR float emaStateCm = NAN;
 
 float lastMeasuredCm = -1.0f;
 float lastEstimatedHeight = -1.0f;
@@ -27,35 +35,59 @@ Preferences preferences;
 
 void sensorTask(void *pv)
 {
-    float avg = 0.0f;
+    // Démarre sur l'état persistant si disponible (sinon NaN).
+    float avg = (isfinite(emaStateCm) ? emaStateCm : NAN);
+
     for (;;)
     {
         float m = measureDistanceStable();
 
-        // Apply configurable offset (dynamic)
+        // Offset dynamique
         float offset = ConfigManager::instance().getMeasureOffsetCm();
         if (m > 0)
             m += offset;
 
-        // alpha dynamique depuis la config
+        // Alpha dynamique depuis la config (fallback 0.25 si invalide)
         float alpha = ConfigManager::instance().getRunningAverageAlpha();
         if (alpha <= 0.0f || alpha > 1.0f)
             alpha = 0.25f;
-        avg = runningAverage(m, avg, alpha);
+
+        // Initialisation "première mesure" pour éviter le biais à 0
+        if (m > 0)
+        {
+            if (!isfinite(avg))
+            {
+                avg = m; // amorçage propre de l’EMA
+            }
+            else
+            {
+                avg = runningAverage(m, avg, alpha);
+            }
+        }
+        // Pas de mise à jour de avg si mesure invalide (m <= 0)
 
         float est = NAN;
-        if (avg > 0.0f)
-            est = estimateHeightFromMeasured(avg);
+        if (isfinite(avg) && avg > 0.0f)
         {
-            std::lock_guard<std::mutex> lock(distMutex);
-            lastMeasuredCm = avg;
-            lastEstimatedHeight = est;
+            est = estimateHeightFromMeasured(avg);
         }
 
-        // Dynamic period from ConfigManager (allows live tuning)
+        {
+            std::lock_guard<std::mutex> lock(distMutex);
+            lastMeasuredCm = (isfinite(avg) ? avg : -1.0f);
+            lastEstimatedHeight = (isfinite(est) ? est : -1.0f);
+        }
+
+        // Sauvegarder l'état EMA courant en RTC pour la reprise après deep sleep
+        if (isfinite(avg))
+        {
+            emaStateCm = avg;
+        }
+
+        // Période de mesure dynamique (garde-fou à 50 ms)
         uint32_t periodMs = ConfigManager::instance().getMeasureIntervalMs();
         if (periodMs < 50)
-            periodMs = 50; // safety lower bound
+            periodMs = 50;
 
         vTaskDelay(pdMS_TO_TICKS(periodMs));
     }

@@ -1,6 +1,12 @@
 #pragma once
 #include <Arduino.h>
 
+/**
+ * État EMA persistant entre les deep sleep.
+ * Déclaré en extern ici, défini dans measurement.cpp (RTC_DATA_ATTR).
+ */
+extern float emaStateCm;
+
 void sensorTask(void *pv);
 void initSensor();
 float measureDistanceStable();

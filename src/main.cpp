@@ -8,6 +8,7 @@
 #include "web_server.h"
 #include "power.h"
 #include "utils.h"
+#include <math.h> // isfinite
 
 bool interactiveMode = false;
 
@@ -30,16 +31,48 @@ void setup()
 
     if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER)
     {
-        float avg = 0;
+        // Repartir de l'EMA persistée si elle existe
+        float avg = (isfinite(emaStateCm) ? emaStateCm : NAN);
+
+        // Utiliser l'alpha configuré (fallback 0.25)
+        float alpha = ConfigManager::instance().getRunningAverageAlpha();
+        if (alpha <= 0.0f || alpha > 1.0f)
+            alpha = 0.25f;
+
+        // Quelques mesures pour stabiliser (sans biais d'init)
         for (int i = 0; i < 3; i++)
         {
-            avg = runningAverage(measureDistanceStable(), avg, 0.25f);
+            float m = measureDistanceStable();
+            if (m > 0)
+            {
+                // appliquer l'offset dynamique
+                m += ConfigManager::instance().getMeasureOffsetCm();
+
+                if (!isfinite(avg))
+                {
+                    avg = m; // amorçage EMA sans partir de 0
+                }
+                else
+                {
+                    avg = runningAverage(m, avg, alpha);
+                }
+            }
             delay(30);
         }
-        lastEstimatedHeight = estimateHeightFromMeasured(avg);
-        lastMeasuredCm = avg;
+
+        // Publier la mesure basée sur l'EMA
+        lastEstimatedHeight = (isfinite(avg) ? estimateHeightFromMeasured(avg) : -1.0f);
+        lastMeasuredCm = (isfinite(avg) ? avg : -1.0f);
+
+        // Persister l'état EMA pour le prochain cycle
+        if (isfinite(avg))
+        {
+            emaStateCm = avg;
+        }
+
         if (connectWiFiShort(6000))
             publishMQTT_measure();
+
         goDeepSleep();
     }
     else
